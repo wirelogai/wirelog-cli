@@ -1,0 +1,52 @@
+version: 2
+
+builds:
+  - id: wl
+    main: .
+    binary: wl
+    ldflags:
+      - -s -w
+      - -X github.com/wirelogai/wirelog-cli/cmd.version={{.Version}}
+      - -X github.com/wirelogai/wirelog-cli/cmd.commit={{.ShortCommit}}
+      - -X github.com/wirelogai/wirelog-cli/cmd.date={{.Date}}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=0
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: "wl_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+
+brews:
+  - repository:
+      owner: wirelogai
+      name: homebrew-tap
+    name: wl
+    homepage: https://wirelog.ai
+    description: "WireLog CLI — headless analytics for agents and LLMs"
+    install: |
+      bin.install "wl"
+    test: |
+      system bin/"wl", "version"
+
+nfpms:
+  - formats: [deb, rpm, apk]
+    homepage: https://wirelog.ai
+    description: "WireLog CLI — headless analytics for agents and LLMs"
+    maintainer: "WireLog <support@wirelog.ai>"
