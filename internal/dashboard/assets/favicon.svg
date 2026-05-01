@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="WireLog favicon cursor on">
+  <rect width="512" height="512" rx="112" fill="#000000" />
+
+  <polyline
+    points="106,156 156,356 206,226 256,356 306,156"
+    fill="none"
+    stroke="#ffffff"
+    stroke-width="48"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <line
+    x1="346"
+    y1="356"
+    x2="406"
+    y2="356"
+    fill="none"
+    stroke="#00ff66"
+    stroke-width="48"
+    stroke-linecap="round"
+  />
+</svg>

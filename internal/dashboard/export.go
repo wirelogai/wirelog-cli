@@ -3,6 +3,7 @@ package dashboard
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -50,6 +51,7 @@ type htmlTemplateData struct {
 	ECharts template.JS
 	AppJS   template.JS
 	Payload template.JS
+	Favicon template.URL
 }
 
 // RenderHTML renders a self-contained dashboard HTML document.
@@ -89,6 +91,10 @@ func RenderHTML(d *Dashboard, results []CardResult, opts ExportOptions) ([]byte,
 	if err != nil {
 		return nil, fmt.Errorf("read echarts asset: %w", err)
 	}
+	favicon, err := assets.ReadFile("assets/favicon.svg")
+	if err != nil {
+		return nil, fmt.Errorf("read favicon asset: %w", err)
+	}
 	tmpl, err := assets.ReadFile("assets/index.html")
 	if err != nil {
 		return nil, fmt.Errorf("read dashboard html: %w", err)
@@ -103,6 +109,7 @@ func RenderHTML(d *Dashboard, results []CardResult, opts ExportOptions) ([]byte,
 		ECharts: template.JS(echarts),
 		AppJS:   template.JS(js),
 		Payload: template.JS(payloadJSON),
+		Favicon: template.URL("data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString(favicon)),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("render dashboard html: %w", err)
