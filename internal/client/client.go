@@ -119,6 +119,18 @@ type HealthStatus struct {
 	Ready   string `json:"ready"`
 }
 
+// QueryJSONResponse is the structured response returned by /query in JSON mode.
+type QueryJSONResponse struct {
+	Columns     []string         `json:"columns"`
+	Rows        []map[string]any `json:"rows"`
+	Total       int              `json:"total"`
+	ElapsedMS   int64            `json:"elapsed_ms"`
+	RowsScanned int64            `json:"rows_scanned"`
+	Period      string           `json:"period"`
+	Mode        string           `json:"mode"`
+	Metadata    map[string]any   `json:"metadata,omitempty"`
+}
+
 // --- API methods ---
 
 // Query sends a DSL query and returns the raw response body.
@@ -147,6 +159,33 @@ func (c *Client) Query(ctx context.Context, q, format string, limit, offset int)
 
 	ct := resp.Header.Get("Content-Type")
 	return data, ct, nil
+}
+
+// QueryJSON sends a DSL query and decodes the JSON response.
+func (c *Client) QueryJSON(ctx context.Context, q string, limit, offset int) (*QueryJSONResponse, error) {
+	body := map[string]any{
+		"q":      q,
+		"format": "json",
+	}
+	if limit > 0 {
+		body["limit"] = limit
+	}
+	if offset > 0 {
+		body["offset"] = offset
+	}
+
+	resp, err := c.doWithRetry(ctx, http.MethodPost, "/query", body)
+	if err != nil {
+		return nil, err
+	}
+	defer closeBody(resp)
+
+	var result QueryJSONResponse
+	err = json.NewDecoder(resp.Body).Decode(&result)
+	if err != nil {
+		return nil, fmt.Errorf("decode query response: %w", err)
+	}
+	return &result, nil
 }
 
 // Track sends one or more events. Auto-generates insert_id when missing.

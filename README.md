@@ -34,6 +34,11 @@ wl query "page_view | last 30d | count by day" --format csv
 # Discover events
 wl inspect
 wl inspect signup
+
+# Build an agent-authored dashboard
+wl dashboard init --output dashboard.yaml
+wl dashboard validate --file dashboard.yaml
+wl dashboard save --file dashboard.yaml --output index.html --mode report
 ```
 
 ## Commands
@@ -44,6 +49,7 @@ wl inspect signup
 | `wl track <event>` | Send tracking events | `pk_` / `sk_` / `aat_` (track) |
 | `wl identify` | Set user profile properties | `pk_` / `sk_` / `aat_` (track) |
 | `wl inspect [event]` | Discover events and properties | `sk_` / `aat_` (query) |
+| `wl dashboard init\|schema\|validate\|view\|save` | Create, validate, view, and export YAML dashboards | varies |
 | `wl project list\|create\|get\|delete\|usage` | Manage projects | `ak_` (admin) |
 | `wl gdpr export\|delete` | GDPR data export/deletion | `sk_` / `aat_` (admin) |
 | `wl health` | Check API health | none |
@@ -86,6 +92,48 @@ Read queries from stdin:
 ```bash
 echo "* | last 7d | count by event_type" | wl query -
 ```
+
+## Dashboards
+
+Dashboards are YAML files that agents can create and validate. They render WireLog queries as local editable dashboards or static HTML.
+
+```bash
+wl dashboard init --output dashboard.yaml
+wl dashboard init --output -                       # starter YAML to stdout
+wl dashboard schema --output -                     # JSON Schema for agents
+wl dashboard validate --file dashboard.yaml
+wl dashboard validate --file - --json              # validate stdin
+wl dashboard run --file dashboard.yaml --json      # run every query and print data
+wl dashboard run --file dashboard.yaml --var range=7d --format markdown
+wl dashboard view --file dashboard.yaml --open
+wl dashboard view --file ./dashboards              # sidebar for every .yaml/.yml file
+wl dashboard save --file dashboard.yaml --output index.html --mode report
+wl dashboard save --file dashboard.yaml --output - --mode report
+```
+
+Export modes:
+
+- `report`: fixed data, preloaded into the HTML, no key embedded.
+- `interactive`: embeds an `aat_` token with query scope so date ranges and variables can re-query from the browser.
+
+```bash
+export WIRELOG_DASHBOARD_TOKEN=aat_xxx
+wl dashboard save --file dashboard.yaml --output index.html --mode interactive --token-env WIRELOG_DASHBOARD_TOKEN
+```
+
+Interactive exports written to files use `0600` permissions because the HTML contains the token.
+
+Agent workflow:
+
+- discover events first with `wl query "inspect * | last 30d" --json`
+- generate YAML from `wl dashboard schema --output -`
+- validate with `wl dashboard validate --file dashboard.yaml`
+- run data with `wl dashboard run --file dashboard.yaml --json`
+
+Dashboard variables are shared anchors. Changing one variable, such as `range`, updates every card that references it with `{{range}}` or `{{platform.fragment}}`.
+When viewing a dashboard directory, add root-level `order: 10` values to control sidebar order; unordered dashboards sort by filename after ordered dashboards.
+User lookup dashboards can use submitted `type: input` email variables with named fragments like `{{subject.events_fragment}}` and `{{subject.users_fragment}}`; `*@domain.com` becomes a safe domain equality filter.
+Chart cards can set `options.x`, `options.y`, and `options.series` when a result has multiple plausible columns. Cards can also set `options.calculate: ratio` to divide the first query by the second query for filtered unit-economics metrics without relying on backend formula support.
 
 ## Agent Usage
 

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WireLog Dashboard</title>
+  <style>{{.CSS}}</style>
+</head>
+<body>
+  <main id="app">
+    <aside id="sidebar" class="sidebar" hidden></aside>
+    <div class="workspace">
+      <div class="topbar">
+        <div>
+          <div class="label">WIRELOG DASHBOARD</div>
+          <h1 id="title">loading</h1>
+        </div>
+        <div id="vars" class="vars"></div>
+        <div class="actions">
+          <details class="settings">
+            <summary>tz</summary>
+            <label>
+              timezone
+              <select id="timezone"></select>
+            </label>
+          </details>
+          <button id="refresh" type="button">refresh</button>
+          <button id="edit" type="button">edit yaml</button>
+        </div>
+      </div>
+      <div id="status" class="status">booting</div>
+      <section id="sections"></section>
+      <aside id="drawer" class="drawer" hidden>
+        <div class="drawer-head">
+          <span>dashboard.yaml</span>
+          <button id="close-editor" type="button">close</button>
+        </div>
+        <textarea id="raw-editor" spellcheck="false"></textarea>
+        <div class="drawer-actions">
+          <button id="save-editor" type="button">save</button>
+          <span id="save-status" class="status"></span>
+        </div>
+      </aside>
+    </div>
+  </main>
+  <script>{{.ECharts}}</script>
+  <script id="wirelog-payload" type="application/json">{{.Payload}}</script>
+  <script>{{.AppJS}}</script>
+</body>
+</html>
