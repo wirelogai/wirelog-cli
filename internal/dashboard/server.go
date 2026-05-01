@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -117,13 +119,14 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
+	id, ok := dashboardIDFromPath(r.URL.Path)
+	if !ok {
 		http.NotFound(w, r)
 		return
 	}
-	ref, err := s.dashboardRef("")
+	ref, err := s.dashboardRef(id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
 	d, _, err := s.loadDashboard(ref.ID)
@@ -338,6 +341,7 @@ func (s *Server) dashboardRef(id string) (DashboardRef, error) {
 	if len(s.Dashboards) == 0 {
 		return DashboardRef{}, fmt.Errorf("no dashboards configured")
 	}
+	id = cleanDashboardID(id)
 	if id == "" {
 		return s.Dashboards[0], nil
 	}
@@ -346,7 +350,48 @@ func (s *Server) dashboardRef(id string) (DashboardRef, error) {
 			return ref, nil
 		}
 	}
+	var matches []DashboardRef
+	for _, ref := range s.Dashboards {
+		if dashboardSlug(ref.ID) == id {
+			matches = append(matches, ref)
+		}
+	}
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+	if len(matches) > 1 {
+		return DashboardRef{}, fmt.Errorf("dashboard %q is ambiguous; use the full file name", id)
+	}
 	return DashboardRef{}, fmt.Errorf("dashboard %q not found", id)
+}
+
+func dashboardIDFromPath(path string) (string, bool) {
+	switch {
+	case path == "/" || path == "":
+		return "", true
+	case path == "/dashboard" || path == "/dashboard/":
+		return "", true
+	case strings.HasPrefix(path, "/dashboard/"):
+		id, err := url.PathUnescape(strings.TrimPrefix(path, "/dashboard/"))
+		if err != nil {
+			return "", false
+		}
+		return cleanDashboardID(id), true
+	default:
+		return "", false
+	}
+}
+
+func cleanDashboardID(id string) string {
+	return strings.Trim(strings.TrimSpace(id), "/")
+}
+
+func dashboardSlug(id string) string {
+	ext := strings.ToLower(filepath.Ext(id))
+	if ext == ".yaml" || ext == ".yml" {
+		return strings.TrimSuffix(id, filepath.Ext(id))
+	}
+	return id
 }
 
 func (s *Server) secure(next http.HandlerFunc) http.HandlerFunc {

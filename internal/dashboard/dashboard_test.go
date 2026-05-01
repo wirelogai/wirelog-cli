@@ -338,6 +338,49 @@ func TestDiscoverDashboardFilesDirectory(t *testing.T) {
 	}
 }
 
+func TestServerDashboardRoutes(t *testing.T) {
+	dir := t.TempDir()
+	alpha := strings.Replace(StarterYAML, "title: Product Growth", "title: Alpha", 1)
+	alpha = strings.Replace(alpha, "order: 10", "order: 20", 1)
+	beta := strings.Replace(StarterYAML, "title: Product Growth", "title: Beta", 1)
+	beta = strings.Replace(beta, "order: 10", "order: 5", 1)
+	if err := WriteNewFile(dir+"/alpha.yaml", []byte(alpha), false); err != nil {
+		t.Fatalf("write alpha dashboard: %v", err)
+	}
+	if err := WriteNewFile(dir+"/beta.yml", []byte(beta), false); err != nil {
+		t.Fatalf("write beta dashboard: %v", err)
+	}
+	server, err := NewServer(dir, "http://example.test", &fakeQueryClient{})
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+
+	tests := []struct {
+		path        string
+		wantStatus  int
+		wantPayload string
+	}{
+		{path: "/", wantStatus: http.StatusOK, wantPayload: `"dashboard_id":"beta.yml"`},
+		{path: "/dashboard/beta.yml", wantStatus: http.StatusOK, wantPayload: `"dashboard_id":"beta.yml"`},
+		{path: "/dashboard/beta", wantStatus: http.StatusOK, wantPayload: `"dashboard_id":"beta.yml"`},
+		{path: "/dashboard/missing", wantStatus: http.StatusNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			req.Host = "127.0.0.1:7331"
+			rec := httptest.NewRecorder()
+			server.Handler().ServeHTTP(rec, req)
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", rec.Code, tt.wantStatus)
+			}
+			if tt.wantPayload != "" && !strings.Contains(rec.Body.String(), tt.wantPayload) {
+				t.Fatalf("response missing %s", tt.wantPayload)
+			}
+		})
+	}
+}
+
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
 	d, _, err := Load(strings.NewReader(StarterYAML))

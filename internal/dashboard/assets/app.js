@@ -48,7 +48,10 @@
       refreshCards(runnableCardIDs());
     });
     if (payload.mode === "local") {
-      loadLocal(state.dashboardID);
+      window.addEventListener("popstate", () => {
+        loadLocal(dashboardIDFromLocation() || "").catch(err => setStatus(err.message || String(err)));
+      });
+      loadLocal(dashboardIDFromLocation() || state.dashboardID);
     } else {
       render();
       if (payload.mode === "interactive") {
@@ -113,10 +116,31 @@
       button.textContent = dashboard.title || dashboard.id;
       button.addEventListener("click", async () => {
         if (dashboard.id === state.dashboardID) return;
-        await loadLocal(dashboard.id);
+        await navigateDashboard(dashboard.id);
       });
       el.sidebar.appendChild(button);
     }
+  }
+
+  async function navigateDashboard(id) {
+    history.pushState({dashboardID: id}, "", dashboardPath(id));
+    await loadLocal(id);
+  }
+
+  function dashboardIDFromLocation() {
+    if (!location.pathname.startsWith("/dashboard/")) return "";
+    return location.pathname.slice("/dashboard/".length).split("/").map(part => {
+      try {
+        return decodeURIComponent(part);
+      } catch (_) {
+        return part;
+      }
+    }).join("/");
+  }
+
+  function dashboardPath(id) {
+    const encoded = String(id || "").split("/").map(encodeURIComponent).join("/");
+    return encoded ? "/dashboard/" + encoded : "/";
   }
 
   function renderVariables() {

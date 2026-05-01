@@ -49,7 +49,7 @@ wl dashboard save --file dashboard.yaml --output index.html --mode report
 | `wl track <event>` | Send tracking events | `pk_` / `sk_` / `aat_` (track) |
 | `wl identify` | Set user profile properties | `pk_` / `sk_` / `aat_` (track) |
 | `wl inspect [event]` | Discover events and properties | `sk_` / `aat_` (query) |
-| `wl dashboard init\|schema\|validate\|view\|save` | Create, validate, view, and export YAML dashboards | varies |
+| `wl dashboard init\|schema\|validate\|run\|view\|save` | Create, validate, run, view, and export YAML dashboards | varies |
 | `wl project list\|create\|get\|delete\|usage` | Manage projects | `ak_` (admin) |
 | `wl gdpr export\|delete` | GDPR data export/deletion | `sk_` / `aat_` (admin) |
 | `wl health` | Check API health | none |
@@ -132,6 +132,7 @@ Agent workflow:
 
 Dashboard variables are shared anchors. Changing one variable, such as `range`, updates every card that references it with `{{range}}` or `{{platform.fragment}}`.
 When viewing a dashboard directory, add root-level `order: 10` values to control sidebar order; unordered dashboards sort by filename after ordered dashboards.
+Directory dashboards also get stable local routes like `/dashboard/usage.yaml`; extensionless routes like `/dashboard/usage` resolve when unambiguous.
 User lookup dashboards can use submitted `type: input` email variables with named fragments like `{{subject.events_fragment}}` and `{{subject.users_fragment}}`; `*@domain.com` becomes a safe domain equality filter.
 Chart cards can set `options.x`, `options.y`, and `options.series` when a result has multiple plausible columns. Cards can also set `options.calculate: ratio` to divide the first query by the second query for filtered unit-economics metrics without relying on backend formula support.
 
