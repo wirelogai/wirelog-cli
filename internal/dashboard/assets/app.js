@@ -11,6 +11,7 @@
     loadingCardIDs: new Set(),
     pendingCardIDs: new Set(),
     visibleTimers: new Map(),
+    tableSorts: new Map(),
     batchTimer: null,
     batchForce: false,
     observer: null,
@@ -85,6 +86,7 @@
     state.variables = defaults(state.dashboard);
     state.timezone = initialTimezone(state.dashboard);
     state.visibleCardIDs.clear();
+    state.tableSorts.clear();
     resetResults();
     render();
     setStatus("dashboard loaded");
@@ -265,7 +267,7 @@
     }
     const series = result.series || [];
     if (card.viz === "table" || card.kind === "table" || card.viz === "event-stream") {
-      body.appendChild(renderTable(firstResponse(series)));
+      body.appendChild(renderTable(firstResponse(series), card));
     } else if (card.viz === "number" || card.kind === "metric") {
       body.appendChild(renderMetric(card, series));
     } else if (card.viz === "json") {
@@ -628,31 +630,153 @@
     return rows.some(row => typeof row[column] === "number");
   }
 
-  function renderTable(resp) {
-    const table = document.createElement("table");
+  function renderTable(resp, card) {
     const columns = resp.columns || [];
     const rows = resp.rows || [];
+    if (rows.length === 1) return renderKeyValueTable(columns, rows[0]);
+
+    const wrap = document.createElement("div");
+    wrap.className = "table-wrap";
+    const table = document.createElement("table");
+    table.className = "data-table";
+    const colgroup = document.createElement("colgroup");
+    for (const col of columns) {
+      const c = document.createElement("col");
+      c.dataset.column = col;
+      colgroup.appendChild(c);
+    }
+    table.appendChild(colgroup);
     const thead = document.createElement("thead");
     const tr = document.createElement("tr");
+    const tableKey = card && card.id ? card.id : "";
+    const sort = tableKey ? (state.tableSorts.get(tableKey) || {column: "", dir: "asc"}) : {column: "", dir: "asc"};
+    const indicators = new Map();
     for (const col of columns) {
       const th = document.createElement("th");
-      th.textContent = displayColumnName(col);
+      th.className = "sortable";
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "th-sort";
+      const label = document.createElement("span");
+      label.textContent = displayColumnName(col);
+      const indicator = document.createElement("span");
+      indicator.className = "sort-indicator";
+      indicators.set(col, indicator);
+      button.append(label, indicator);
+      button.addEventListener("click", () => {
+        if (sort.column === col) {
+          sort.dir = sort.dir === "asc" ? "desc" : "asc";
+        } else {
+          sort.column = col;
+          sort.dir = "asc";
+        }
+        if (tableKey) state.tableSorts.set(tableKey, {column: sort.column, dir: sort.dir});
+        updateSortIndicators(indicators, sort);
+        renderTableRows(tbody, columns, sortedTableRows(rows, sort));
+      });
+      const resizer = document.createElement("span");
+      resizer.className = "col-resizer";
+      const colEl = colgroup.children[columns.indexOf(col)];
+      attachColumnResizer(resizer, th, colEl);
+      th.append(button, resizer);
       tr.appendChild(th);
     }
     thead.appendChild(tr);
     table.appendChild(thead);
     const tbody = document.createElement("tbody");
-    for (const row of rows.slice(0, 200)) {
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    updateSortIndicators(indicators, sort);
+    renderTableRows(tbody, columns, sortedTableRows(rows, sort));
+    return wrap;
+  }
+
+  function renderKeyValueTable(columns, row) {
+    const wrap = document.createElement("div");
+    wrap.className = "table-wrap";
+    const table = document.createElement("table");
+    table.className = "kv-table";
+    const tbody = document.createElement("tbody");
+    for (const col of columns) {
       const r = document.createElement("tr");
-      for (const col of columns) {
-        const td = document.createElement("td");
-        td.textContent = formatValue(row[col], col);
-        r.appendChild(td);
-      }
+      const key = document.createElement("th");
+      key.scope = "row";
+      key.textContent = displayColumnName(col);
+      const value = document.createElement("td");
+      value.textContent = formatValue(row[col], col);
+      r.append(key, value);
       tbody.appendChild(r);
     }
     table.appendChild(tbody);
-    return table;
+    wrap.appendChild(table);
+    return wrap;
+  }
+
+  function renderTableRows(tbody, columns, rows) {
+    tbody.innerHTML = "";
+    for (const row of rows.slice(0, 200)) {
+      const tr = document.createElement("tr");
+      for (const col of columns) {
+        const td = document.createElement("td");
+        td.textContent = formatValue(row[col], col);
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    }
+  }
+
+  function sortedTableRows(rows, sort) {
+    const copy = rows.slice();
+    if (!sort || !sort.column) return copy;
+    const direction = sort.dir === "desc" ? -1 : 1;
+    return copy.sort((a, b) => direction * compareTableValues(a[sort.column], b[sort.column], sort.column));
+  }
+
+  function compareTableValues(a, b, column) {
+    const aEmpty = a === null || a === undefined || a === "";
+    const bEmpty = b === null || b === undefined || b === "";
+    if (aEmpty && bEmpty) return 0;
+    if (aEmpty) return 1;
+    if (bEmpty) return -1;
+    const aNum = typeof a === "number" ? a : Number(a);
+    const bNum = typeof b === "number" ? b : Number(b);
+    if (Number.isFinite(aNum) && Number.isFinite(bNum)) return aNum - bNum;
+    if (isTimeColumn(column) || isTimeLike(a) || isTimeLike(b)) return timeValue(a) - timeValue(b);
+    const as = comparableString(a);
+    const bs = comparableString(b);
+    if (as < bs) return -1;
+    if (as > bs) return 1;
+    return 0;
+  }
+
+  function comparableString(value) {
+    if (typeof value === "object") return JSON.stringify(value);
+    return String(value);
+  }
+
+  function updateSortIndicators(indicators, sort) {
+    for (const [col, indicator] of indicators.entries()) {
+      indicator.textContent = sort && sort.column === col ? (sort.dir === "desc" ? "v" : "^") : "";
+    }
+  }
+
+  function attachColumnResizer(handle, th, col) {
+    handle.addEventListener("pointerdown", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      const startX = event.clientX;
+      const startWidth = th.getBoundingClientRect().width;
+      const onMove = moveEvent => {
+        const width = Math.max(72, startWidth + moveEvent.clientX - startX);
+        col.style.width = width + "px";
+      };
+      const onUp = () => {
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+      };
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", onUp);
+    });
   }
 
   function renderMetric(card, series) {
@@ -667,7 +791,7 @@
 
   function drawChart(node, card, series) {
     if (!window.echarts) {
-      node.appendChild(renderTable(firstResponse(series)));
+      node.appendChild(renderTable(firstResponse(series), card));
       return;
     }
     requestAnimationFrame(() => {
@@ -941,6 +1065,7 @@
     if (value === null || value === undefined) return "";
     if (isTimeColumn(column) || isTimeLike(value)) return formatTime(value, column);
     if (typeof value === "number") return new Intl.NumberFormat().format(value);
+    if (typeof value === "object") return JSON.stringify(value);
     return String(value);
   }
 

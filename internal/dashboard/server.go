@@ -85,7 +85,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/dashboard", s.secure(s.handleDashboard))
 	mux.HandleFunc("/api/run", s.secure(s.handleRun))
 	mux.HandleFunc("/api/export", s.secure(s.handleExport))
-	return s.hostGuard(mux)
+	return s.logRequests(s.hostGuard(mux))
 }
 
 // ListenAndServe serves the dashboard on addr until ctx is canceled.
@@ -208,6 +208,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -216,12 +217,17 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	d, raw, err := s.loadDashboard(req.DashboardID)
+	ref, err := s.dashboardRef(req.DashboardID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err = s.resolveDynamicVariables(r.Context(), req.DashboardID, raw, d); err != nil {
+	d, raw, err := s.loadDashboard(ref.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err = s.resolveDynamicVariables(r.Context(), ref.ID, raw, d); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -234,6 +240,7 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	s.logRun(ref.ID, results, time.Since(started))
 	writeJSON(w, map[string]any{"results": results})
 }
 
@@ -392,6 +399,67 @@ func dashboardSlug(id string) string {
 		return strings.TrimSuffix(id, filepath.Ext(id))
 	}
 	return id
+}
+
+func (s *Server) logRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
+		rec := &loggingResponseWriter{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		fmt.Fprintf(os.Stderr, "dashboard request method=%s path=%s status=%d bytes=%d duration=%s\n",
+			r.Method,
+			r.URL.Path,
+			rec.status,
+			rec.bytes,
+			time.Since(started).Round(time.Millisecond),
+		)
+	})
+}
+
+type loggingResponseWriter struct {
+	http.ResponseWriter
+	status int
+	bytes  int
+}
+
+func (w *loggingResponseWriter) WriteHeader(status int) {
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *loggingResponseWriter) Write(b []byte) (int, error) {
+	n, err := w.ResponseWriter.Write(b)
+	w.bytes += n
+	return n, err
+}
+
+func (s *Server) logRun(dashboardID string, results []CardResult, elapsed time.Duration) {
+	cards := len(results)
+	seriesCount := 0
+	rowCount := 0
+	errorCount := 0
+	for _, result := range results {
+		if result.Error != "" {
+			errorCount++
+		}
+		for _, series := range result.Series {
+			seriesCount++
+			if series.Error != "" {
+				errorCount++
+			}
+			if series.Response != nil {
+				rowCount += len(series.Response.Rows)
+			}
+		}
+	}
+	fmt.Fprintf(os.Stderr, "dashboard run dashboard=%s cards=%d series=%d rows=%d errors=%d duration=%s\n",
+		dashboardID,
+		cards,
+		seriesCount,
+		rowCount,
+		errorCount,
+		elapsed.Round(time.Millisecond),
+	)
 }
 
 func (s *Server) secure(next http.HandlerFunc) http.HandlerFunc {

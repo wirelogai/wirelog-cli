@@ -215,19 +215,86 @@ table {
   font-size: 12px;
 }
 
+.table-wrap {
+  width: 100%;
+  max-height: calc(var(--h, 4) * 68px);
+  overflow: auto;
+}
+
+.data-table {
+  table-layout: fixed;
+  min-width: 100%;
+}
+
 th, td {
   border-bottom: 1px solid var(--border);
   padding: 6px;
   text-align: left;
   vertical-align: top;
+  overflow-wrap: anywhere;
 }
 
 th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg);
   color: var(--dim);
   font-weight: 500;
+  user-select: none;
 }
 
 td {
+  color: var(--fg);
+}
+
+.sortable {
+  position: relative;
+  padding-right: 12px;
+}
+
+.th-sort {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  color: var(--dim);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.th-sort:hover {
+  color: var(--green);
+}
+
+.sort-indicator {
+  color: var(--green);
+  min-width: 1ch;
+}
+
+.col-resizer {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+}
+
+.col-resizer:hover {
+  background: var(--green);
+}
+
+.kv-table th {
+  width: 34%;
+  position: static;
+  color: var(--dim);
+}
+
+.kv-table td {
   color: var(--fg);
 }
 
