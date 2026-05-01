@@ -342,7 +342,7 @@
   }
 
   function scheduleVisibleLoad(id) {
-    if (state.visibleTimers.has(id) || state.loadingCardIDs.has(id) || resultByID(id)) return;
+    if (state.visibleTimers.has(id) || state.pendingCardIDs.has(id) || state.loadingCardIDs.has(id) || resultByID(id)) return;
     const timer = setTimeout(() => {
       state.visibleTimers.delete(id);
       if (state.visibleCardIDs.has(id)) {
@@ -361,7 +361,7 @@
     clearVisibleTimers();
     if (!("IntersectionObserver" in window)) {
       state.visibleCardIDs = new Set(runnableCardIDs());
-      setTimeout(() => runVisible({force: false}), 2000);
+      runVisible({force: false});
       return;
     }
     state.observer = new IntersectionObserver(entries => {
@@ -380,6 +380,22 @@
     for (const panel of el.sections.querySelectorAll(".panel")) {
       state.observer.observe(panel);
     }
+    queueInitialViewportCards();
+  }
+
+  function queueInitialViewportCards() {
+    const ids = [];
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+    for (const panel of el.sections.querySelectorAll(".panel")) {
+      const id = panel.dataset.cardId;
+      if (!id) continue;
+      const rect = panel.getBoundingClientRect();
+      if (rect.bottom > 0 && rect.top < viewportHeight) {
+        state.visibleCardIDs.add(id);
+        ids.push(id);
+      }
+    }
+    if (ids.length > 0) queueCards(ids, {force: false});
   }
 
   async function runVisible(options) {
@@ -818,7 +834,7 @@
     return {
       backgroundColor: "#000",
       color: ["#00ff88", "#ffffff", "#7a8a7a", "#ff6b6b"],
-      tooltip: {trigger: "axis"},
+      tooltip: chartTooltip("axis"),
       grid: {left: 12, right: 18, top: 18, bottom: 62, containLabel: true},
       xAxis: {
         type: "category",
@@ -938,7 +954,7 @@
     return {
       backgroundColor: "#000",
       color: ["#00ff88", "#ffffff", "#7a8a7a", "#ff6b6b", "#1d2a20"],
-      tooltip: {trigger: "item"},
+      tooltip: chartTooltip("item"),
       series: [{type: "pie", radius: "68%", data: rows.map(r => ({name: formatValue(r[nameCol], nameCol), value: Number(r[valueCol]) || 0}))}],
     };
   }
@@ -952,7 +968,7 @@
     return {
       backgroundColor: "#000",
       color: ["#00ff88", "#ffffff", "#7a8a7a", "#ff6b6b"],
-      tooltip: {trigger: "item"},
+      tooltip: chartTooltip("item"),
       series: [{type: "funnel", left: "8%", top: 10, bottom: 10, width: "84%", label: {color: "#fff"}, data: rows.map(r => ({name: formatValue(r[nameCol], nameCol), value: Number(r[valueCol]) || 0}))}],
     };
   }
@@ -983,6 +999,15 @@
       x: x || "",
       y: y || "",
       series: series || "",
+    };
+  }
+
+  function chartTooltip(trigger) {
+    return {
+      trigger: trigger,
+      appendToBody: true,
+      confine: false,
+      extraCssText: "z-index:9999;",
     };
   }
 
