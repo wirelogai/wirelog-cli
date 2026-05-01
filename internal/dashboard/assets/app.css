@@ -222,7 +222,8 @@ table {
 }
 
 .data-table {
-  table-layout: fixed;
+  table-layout: auto;
+  width: max-content;
   min-width: 100%;
 }
 
@@ -232,6 +233,14 @@ th, td {
   text-align: left;
   vertical-align: top;
   overflow-wrap: anywhere;
+}
+
+.data-table th,
+.data-table td {
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 th {
@@ -254,7 +263,8 @@ td {
 }
 
 .th-sort {
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   display: flex;
   justify-content: space-between;
   gap: 8px;
@@ -264,6 +274,7 @@ td {
   background: transparent;
   text-align: left;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .th-sort:hover {

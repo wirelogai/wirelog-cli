@@ -659,6 +659,7 @@
       button.className = "th-sort";
       const label = document.createElement("span");
       label.textContent = displayColumnName(col);
+      label.title = col;
       const indicator = document.createElement("span");
       indicator.className = "sort-indicator";
       indicators.set(col, indicator);
@@ -703,7 +704,9 @@
       key.scope = "row";
       key.textContent = displayColumnName(col);
       const value = document.createElement("td");
-      value.textContent = formatValue(row[col], col);
+      const text = formatValue(row[col], col);
+      value.textContent = text;
+      value.title = text;
       r.append(key, value);
       tbody.appendChild(r);
     }
@@ -718,7 +721,9 @@
       const tr = document.createElement("tr");
       for (const col of columns) {
         const td = document.createElement("td");
-        td.textContent = formatValue(row[col], col);
+        const text = formatValue(row[col], col);
+        td.textContent = text;
+        td.title = text;
         tr.appendChild(td);
       }
       tbody.appendChild(tr);
