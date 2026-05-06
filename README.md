@@ -30,6 +30,8 @@ wl track signup --user-id u2 --prop-json '{"plan":"pro","seats":5}'
 # Query data
 wl query "* | last 7d | count by event_type"
 wl query "page_view | last 30d | count by day" --format csv
+wl query "themeSwitch | latest event_properties.theme | count by last_value | top 10"
+wl query "users | count by user.theme"
 
 # Discover events
 wl inspect
