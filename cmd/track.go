@@ -22,6 +22,7 @@ var (
 	trackStdin     bool
 	trackBatchSize int
 	trackDryRun    bool
+	trackMaxEPS    float64
 )
 
 var trackCmd = &cobra.Command{
@@ -51,6 +52,9 @@ func init() {
 	f.BoolVar(&trackStdin, "stdin", false, "Read events as JSONL from stdin")
 	f.IntVar(&trackBatchSize, "batch-size", 100, "Batch size for stdin mode")
 	f.BoolVar(&trackDryRun, "dry-run", false, "Print request body without sending")
+	f.Float64Var(&trackMaxEPS, "max-events-per-second", 0,
+		"Throttle stdin mode to at most N events/second (0 = unlimited). "+
+			"After each batch flush, sleep N/rate seconds before reading the next batch.")
 	rootCmd.AddCommand(trackCmd)
 }
 
@@ -140,6 +144,8 @@ func runTrackStdin() error {
 	// Increase buffer for large lines
 	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
 
+	throttle := &client.Throttle{EventsPerSecond: trackMaxEPS}
+
 	var batch []client.TrackEvent
 	totalAccepted := 0
 
@@ -155,12 +161,14 @@ func runTrackStdin() error {
 		ctx, cancel := cmdContext()
 		defer cancel()
 
+		sent := len(batch)
 		resp, err := c.Track(ctx, batch)
 		if err != nil {
 			return err
 		}
 		totalAccepted += resp.Accepted
 		batch = batch[:0]
+		throttle.Wait(sent)
 		return nil
 	}
 

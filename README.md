@@ -87,7 +87,16 @@ Pipe JSONL events from files or other programs:
 ```bash
 cat events.jsonl | wl track --stdin
 echo '{"event_type":"click","user_id":"u1"}' | wl track --stdin
+
+# Throttle a large import to be nice to the server (off by default).
+# After each batch flush the CLI sleeps long enough to keep the average
+# send rate at or below the requested events/second.
+cat huge.jsonl | wl track --stdin --batch-size 100 --max-events-per-second 100
 ```
+
+`wl track` retries automatically on `429` (Too Many Requests, honouring
+the `Retry-After` header) and on `5xx` server errors with exponential
+backoff (up to 3 attempts).
 
 Read queries from stdin:
 

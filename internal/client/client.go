@@ -10,6 +10,7 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,6 +19,7 @@ import (
 const (
 	maxRetries     = 3
 	baseRetryDelay = 500 * time.Millisecond
+	maxRetryDelay  = 30 * time.Second
 )
 
 // Client is a synchronous HTTP client for the WireLog API.
@@ -402,8 +404,10 @@ func (c *Client) doWithRetry(ctx context.Context, method, path string, body any)
 			apiErr.Message = string(respBody)
 		}
 
-		// Retry on 429 with backoff
-		if resp.StatusCode == 429 && attempt < maxRetries-1 {
+		// Retry on 429 or 5xx with backoff. 5xx retries previously fell
+		// through as fatal errors, which made transient infra blips kill
+		// long stdin imports. 429 still uses Retry-After when present.
+		if isRetryableStatus(resp.StatusCode) && attempt < maxRetries-1 {
 			delay := retryDelay(attempt, apiErr.RetryAfter)
 			lastErr = apiErr
 			select {
@@ -417,6 +421,10 @@ func (c *Client) doWithRetry(ctx context.Context, method, path string, body any)
 		return nil, apiErr
 	}
 	return nil, lastErr
+}
+
+func isRetryableStatus(status int) bool {
+	return status == http.StatusTooManyRequests || (status >= http.StatusInternalServerError && status < 600)
 }
 
 func (c *Client) doRaw(ctx context.Context, method, path string, body any) (*http.Response, error) {
@@ -456,10 +464,40 @@ func closeBody(resp *http.Response) {
 }
 
 func retryDelay(attempt int, retryAfter string) time.Duration {
-	if retryAfter != "" {
-		if secs, err := strconv.Atoi(retryAfter); err == nil {
-			return time.Duration(secs) * time.Second
+	if d := parseRetryAfter(retryAfter, time.Now()); d > 0 {
+		if d > maxRetryDelay {
+			return maxRetryDelay
 		}
+		return d
 	}
-	return baseRetryDelay * time.Duration(math.Pow(2, float64(attempt)))
+	delay := baseRetryDelay * time.Duration(math.Pow(2, float64(attempt)))
+	if delay > maxRetryDelay {
+		return maxRetryDelay
+	}
+	return delay
+}
+
+// parseRetryAfter parses a Retry-After header value, supporting both the
+// delta-seconds form and the HTTP-date form. Returns 0 if the value is
+// missing, unparseable, or non-positive. Mirrors the SDK contract in
+// docs/client-sdk-contract.md.
+func parseRetryAfter(header string, now time.Time) time.Duration {
+	header = strings.TrimSpace(header)
+	if header == "" {
+		return 0
+	}
+	if seconds, err := strconv.Atoi(header); err == nil {
+		if seconds <= 0 {
+			return 0
+		}
+		return time.Duration(seconds) * time.Second
+	}
+	if when, err := http.ParseTime(header); err == nil {
+		delta := when.Sub(now)
+		if delta <= 0 {
+			return 0
+		}
+		return delta
+	}
+	return 0
 }
