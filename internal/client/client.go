@@ -423,6 +423,23 @@ func (c *Client) doWithRetry(ctx context.Context, method, path string, body any)
 	return nil, lastErr
 }
 
+// DoJSON sends a request and decodes a JSON response.
+func (c *Client) DoJSON(ctx context.Context, method, path string, body any, target any) error {
+	resp, err := c.doWithRetry(ctx, method, path, body)
+	if err != nil {
+		return err
+	}
+	defer closeBody(resp)
+	if target == nil {
+		return nil
+	}
+	err = json.NewDecoder(resp.Body).Decode(target)
+	if err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+	return nil
+}
+
 func isRetryableStatus(status int) bool {
 	return status == http.StatusTooManyRequests || (status >= http.StatusInternalServerError && status < 600)
 }

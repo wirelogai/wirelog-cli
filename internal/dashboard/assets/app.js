@@ -831,14 +831,24 @@
     if (card.viz === "pie") return pieOption(effectiveSeries, card);
     if (card.viz === "funnel") return funnelOption(effectiveSeries, card);
     const lineLike = card.viz === "line" || card.viz === "area";
+    const areaLike = card.viz === "area";
+    const chartSeries = effectiveSeries.flatMap(s => responseToChartSeries(s, card, lineLike, areaLike));
+    const xDomain = chartAxisDomain(chartSeries);
+    const xLabels = Object.fromEntries(xDomain.map(point => [point.key, point.label]));
     return {
       backgroundColor: "#000",
       color: ["#00ff88", "#ffffff", "#7a8a7a", "#ff6b6b"],
-      tooltip: chartTooltip("axis"),
+      tooltip: chartTooltip("axis", xLabels),
       grid: {left: 12, right: 18, top: 18, bottom: 62, containLabel: true},
       xAxis: {
         type: "category",
-        axisLabel: {color: "#7a8a7a", hideOverlap: true, margin: 12},
+        data: xDomain.map(point => point.key),
+        axisLabel: {
+          color: "#7a8a7a",
+          hideOverlap: true,
+          margin: 12,
+          formatter: value => xLabels[String(value)] || String(value),
+        },
         axisLine: {lineStyle: {color: "#1d2a20"}},
       },
       yAxis: {
@@ -847,7 +857,7 @@
         splitLine: {lineStyle: {color: "#1d2a20"}},
       },
       legend: {textStyle: {color: "#7a8a7a"}, bottom: 4, type: "scroll"},
-      series: effectiveSeries.flatMap(s => responseToChartSeries(s, card, lineLike)),
+      series: chartSeries.map(chartModelToSeries),
     };
   }
 
@@ -908,7 +918,7 @@
     return (resp.columns || []).find(col => !isMetricColumn(col)) || "";
   }
 
-  function responseToChartSeries(series, card, lineLike) {
+  function responseToChartSeries(series, card, lineLike, areaLike) {
     const resp = series.response || {columns: [], rows: []};
     const cols = resp.columns || [];
     const rows = resp.rows || [];
@@ -920,7 +930,7 @@
       ? [seriesCol]
       : cols.filter(col => col !== xCol && col !== yCol && !isMetricColumn(col) && rows.some(row => row[col] !== null && row[col] !== undefined && row[col] !== ""));
     if (groupCols.length === 0) {
-      return [rowsToChartSeries(series.name, rows, xCol, yCol, lineLike)];
+      return [rowsToChartSeries(series.name, rows, xCol, yCol, lineLike, areaLike)];
     }
     const groups = new Map();
     for (const row of rows) {
@@ -930,18 +940,85 @@
     }
     return [...groups.entries()].map(([key, groupRows]) => {
       const name = series.name && series.name !== key ? series.name + " · " + key : key;
-      return rowsToChartSeries(name, groupRows, xCol, yCol, lineLike);
+      return rowsToChartSeries(name, groupRows, xCol, yCol, lineLike, areaLike);
     });
   }
 
-  function rowsToChartSeries(name, rows, xCol, yCol, lineLike) {
+  function rowsToChartSeries(name, rows, xCol, yCol, lineLike, areaLike) {
     const sorted = sortRowsForAxis(rows, xCol);
+    const axisType = axisValueType(sorted.map(row => row[xCol]), xCol);
     return {
       name: name,
       type: lineLike ? "line" : "bar",
-      areaStyle: lineLike ? {} : undefined,
+      areaStyle: areaLike ? {} : undefined,
       showSymbol: sorted.length <= 80,
-      data: sorted.map(r => [formatAxisValue(r[xCol], xCol), Number(r[yCol]) || 0]),
+      points: sorted.map(r => chartPoint(r, xCol, yCol, axisType)),
+    };
+  }
+
+  function chartPoint(row, xCol, yCol, axisType) {
+    const raw = row[xCol];
+    const value = Number(row[yCol]);
+    const sort = axisSortValue(raw, axisType);
+    return {
+      key: axisKey(raw, axisType),
+      label: formatAxisValue(raw, xCol),
+      sort: sort.value,
+      sortable: sort.sortable,
+      value: Number.isFinite(value) ? value : 0,
+    };
+  }
+
+  function axisKey(value, axisType) {
+    if (value === null || value === undefined) return "";
+    if (axisType === "time") {
+      const date = parseTime(value);
+      if (date) return "t:" + date.getTime();
+    }
+    return String(value);
+  }
+
+  function axisSortValue(value, axisType) {
+    if (axisType === "number") {
+      const n = Number(value);
+      return {value: n, sortable: Number.isFinite(n)};
+    }
+    if (axisType === "time") {
+      const t = timeValue(value);
+      return {value: t, sortable: t > 0};
+    }
+    return {value: 0, sortable: false};
+  }
+
+  function chartAxisDomain(series) {
+    const byKey = new Map();
+    let order = 0;
+    for (const s of series || []) {
+      for (const point of s.points || []) {
+        if (byKey.has(point.key)) continue;
+        byKey.set(point.key, {
+          key: point.key,
+          label: point.label,
+          sort: point.sort,
+          sortable: point.sortable,
+          order: order++,
+        });
+      }
+    }
+    const domain = [...byKey.values()];
+    if (domain.length > 0 && domain.every(point => point.sortable)) {
+      return domain.sort((a, b) => a.sort - b.sort || a.order - b.order);
+    }
+    return domain.sort((a, b) => a.order - b.order);
+  }
+
+  function chartModelToSeries(model) {
+    return {
+      name: model.name,
+      type: model.type,
+      areaStyle: model.areaStyle,
+      showSymbol: model.showSymbol,
+      data: (model.points || []).map(point => [point.key, point.value]),
     };
   }
 
@@ -1002,13 +1079,38 @@
     };
   }
 
-  function chartTooltip(trigger) {
-    return {
+  function chartTooltip(trigger, axisLabels) {
+    const tooltip = {
       trigger: trigger,
       appendToBody: true,
       confine: false,
       extraCssText: "z-index:9999;",
     };
+    if (trigger === "axis" && axisLabels) {
+      tooltip.formatter = params => {
+        const items = Array.isArray(params) ? params : [params];
+        if (items.length === 0) return "";
+        const title = axisLabels[String(items[0].axisValue)] || String(items[0].axisValue || "");
+        const lines = [escapeHTML(title)];
+        for (const item of items) {
+          const value = Array.isArray(item.value) ? item.value[1] : item.value;
+          if (value === null || value === undefined || value === "") continue;
+          lines.push((item.marker || "") + escapeHTML(item.seriesName || "") + ": " + escapeHTML(formatValue(value, "")));
+        }
+        return lines.join("<br>");
+      };
+    }
+    return tooltip;
+  }
+
+  function escapeHTML(value) {
+    return String(value).replace(/[&<>"']/g, char => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    }[char]));
   }
 
   function openEditor() {

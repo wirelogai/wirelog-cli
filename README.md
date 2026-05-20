@@ -147,6 +147,25 @@ Directory dashboards also get stable local routes like `/dashboard/usage.yaml`; 
 User lookup dashboards can use submitted `type: input` email variables with named fragments like `{{subject.events_fragment}}` and `{{subject.users_fragment}}`; `*@domain.com` becomes a safe domain equality filter.
 Chart cards can set `options.x`, `options.y`, and `options.series` when a result has multiple plausible columns. Cards can also set `options.calculate: ratio` to divide the first query by the second query for filtered unit-economics metrics without relying on backend formula support.
 
+## Choices
+
+```bash
+wl choice results landing_h1 --conversion signup --window 7d
+wl choice results landing_h1 --conversion signup --unit device_id --json
+```
+
+Choices are created from application code with `wirelog.choice()` and exposure
+events are recorded by the SDK. The CLI defaults to `user_id`, which is the
+usual product experiment unit; use `--unit device_id` for anonymous visitor
+tests.
+
+Start analysis with event discovery:
+
+```bash
+wl query "inspect * | last 30d" --json
+wl query "* | last 30d | count by event_type | top 20" --json
+```
+
 ## Agent Usage
 
 The CLI is designed for AI agent consumption:
