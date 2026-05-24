@@ -47,7 +47,7 @@ wl dashboard save --file dashboard.yaml --output index.html --mode report
 
 | Command | Description | Key Type |
 |---|---|---|
-| `wl query <dsl>` | Run analytics queries | `sk_` / `aat_` (query) |
+| `wl query [dsl] [--query ...]` | Run one query or a query list | `sk_` / `aat_` (query) |
 | `wl track <event>` | Send tracking events | `pk_` / `sk_` / `aat_` (track) |
 | `wl identify` | Set user profile properties | `pk_` / `sk_` / `aat_` (track) |
 | `wl inspect [event]` | Discover events and properties | `sk_` / `aat_` (query) |
@@ -98,11 +98,23 @@ cat huge.jsonl | wl track --stdin --batch-size 100 --max-events-per-second 100
 the `Retry-After` header) and on `5xx` server errors with exponential
 backoff (up to 3 attempts).
 
-Read queries from stdin:
+Read one query or a query list from stdin:
 
 ```bash
 echo "* | last 7d | count by event_type" | wl query -
+printf '%s\n' "* | last 7d | count" "users | count" | wl query - --json
 ```
+
+For agents, repeat `--query` instead of building a JSON string:
+
+```bash
+wl query --query "* | last 7d | count" --query "users | count" --json
+wl query --query "inspect * | last 30d" --query "users | list" --json --concurrency 4
+```
+
+Query lists run with bounded concurrency and return `{"results":[...]}` in JSON
+mode. CSV output is single-query only. JSON string arrays and `{"queries":[...]}`
+objects are still accepted as a compatibility path.
 
 ## Dashboards
 
@@ -181,6 +193,7 @@ The CLI is designed for AI agent consumption:
 # Agent workflow
 wl inspect --json                                    # discover schema
 wl query "* | last 7d | count by event_type" --json  # structured results
+wl query --query "inspect * | last 30d" --query "users | count" --json
 wl track signup --user-id u1 --prop plan=pro --json   # send events
 ```
 
