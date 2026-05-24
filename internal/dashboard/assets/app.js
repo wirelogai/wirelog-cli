@@ -833,32 +833,42 @@
     const lineLike = card.viz === "line" || card.viz === "area";
     const areaLike = card.viz === "area";
     const chartSeries = effectiveSeries.flatMap(s => responseToChartSeries(s, card, lineLike, areaLike));
-    const xDomain = chartAxisDomain(chartSeries);
-    const xLabels = Object.fromEntries(xDomain.map(point => [point.key, point.label]));
+    const xAxis = chartAxisModel(chartSeries);
     return {
       backgroundColor: "#000",
-      color: ["#00ff88", "#ffffff", "#7a8a7a", "#ff6b6b"],
-      tooltip: chartTooltip("axis", xLabels),
+      color: chartPalette(),
+      tooltip: chartTooltip("axis", xAxis),
       grid: {left: 12, right: 18, top: 18, bottom: 62, containLabel: true},
-      xAxis: {
-        type: "category",
-        data: xDomain.map(point => point.key),
-        axisLabel: {
-          color: "#7a8a7a",
-          hideOverlap: true,
-          margin: 12,
-          formatter: value => xLabels[String(value)] || String(value),
-        },
-        axisLine: {lineStyle: {color: "#1d2a20"}},
-      },
+      xAxis: chartXAxis(xAxis),
       yAxis: {
         type: "value",
         axisLabel: {color: "#7a8a7a", margin: 10},
         splitLine: {lineStyle: {color: "#1d2a20"}},
       },
       legend: {textStyle: {color: "#7a8a7a"}, bottom: 4, type: "scroll"},
-      series: chartSeries.map(chartModelToSeries),
+      series: chartSeries.map(model => chartModelToSeries(model, xAxis)),
     };
+  }
+
+  function chartPalette() {
+    return ["#00ff88", "#ffffff", "#7a8a7a", "#ff6b6b", "#2dd4bf", "#facc15", "#60a5fa", "#f472b6", "#fb923c", "#a78bfa", "#34d399", "#e5e7eb"];
+  }
+
+  function chartXAxis(axis) {
+    const xAxis = {
+      type: axis.type === "category" ? "category" : axis.type === "number" ? "value" : "time",
+      axisLabel: {
+        color: "#7a8a7a",
+        hideOverlap: true,
+        margin: 12,
+        formatter: value => formatChartAxisTick(value, axis),
+      },
+      axisLine: {lineStyle: {color: "#1d2a20"}},
+    };
+    if (axis.type === "category") {
+      xAxis.data = axis.domain.map(point => point.value);
+    }
+    return xAxis;
   }
 
   function calculatedSeries(card, series) {
@@ -946,79 +956,103 @@
 
   function rowsToChartSeries(name, rows, xCol, yCol, lineLike, areaLike) {
     const sorted = sortRowsForAxis(rows, xCol);
-    const axisType = axisValueType(sorted.map(row => row[xCol]), xCol);
     return {
+      xCol: xCol,
       name: name,
       type: lineLike ? "line" : "bar",
       areaStyle: areaLike ? {} : undefined,
       showSymbol: sorted.length <= 80,
-      points: sorted.map(r => chartPoint(r, xCol, yCol, axisType)),
+      points: sorted.map(r => chartPoint(r, xCol, yCol)),
     };
   }
 
-  function chartPoint(row, xCol, yCol, axisType) {
+  function chartPoint(row, xCol, yCol) {
     const raw = row[xCol];
     const value = Number(row[yCol]);
-    const sort = axisSortValue(raw, axisType);
     return {
-      key: axisKey(raw, axisType),
+      raw: raw,
       label: formatAxisValue(raw, xCol),
-      sort: sort.value,
-      sortable: sort.sortable,
-      value: Number.isFinite(value) ? value : 0,
+      value: Number.isFinite(value) ? value : null,
     };
   }
 
-  function axisKey(value, axisType) {
-    if (value === null || value === undefined) return "";
-    if (axisType === "time") {
-      const date = parseTime(value);
-      if (date) return "t:" + date.getTime();
-    }
-    return String(value);
+  function chartAxisModel(series) {
+    const points = (series || []).flatMap(s => s.points || []);
+    const type = chartAxisType(points);
+    const domain = chartAxisDomain(points, type);
+    return {
+      type: type,
+      column: chartAxisColumn(series),
+      domain: domain,
+      labels: Object.fromEntries(domain.map(point => [String(point.value), point.label])),
+    };
   }
 
-  function axisSortValue(value, axisType) {
-    if (axisType === "number") {
+  function chartAxisColumn(series) {
+    const model = (series || []).find(s => s.xCol);
+    return model ? model.xCol : "";
+  }
+
+  function chartAxisType(points) {
+    const values = points.map(point => point.raw).filter(value => value !== null && value !== undefined && value !== "");
+    if (values.length === 0) return "category";
+    if (values.every(value => parseTime(value))) return "time";
+    if (values.every(value => {
       const n = Number(value);
-      return {value: n, sortable: Number.isFinite(n)};
+      return Number.isFinite(n);
+    })) {
+      return "number";
     }
-    if (axisType === "time") {
-      const t = timeValue(value);
-      return {value: t, sortable: t > 0};
-    }
-    return {value: 0, sortable: false};
+    return "category";
   }
 
-  function chartAxisDomain(series) {
+  function chartAxisDomain(points, axisType) {
     const byKey = new Map();
     let order = 0;
-    for (const s of series || []) {
-      for (const point of s.points || []) {
-        if (byKey.has(point.key)) continue;
-        byKey.set(point.key, {
-          key: point.key,
-          label: point.label,
-          sort: point.sort,
-          sortable: point.sortable,
-          order: order++,
-        });
-      }
+    for (const point of points || []) {
+      const domainPoint = chartDomainPoint(point.raw, axisType, point.label);
+      if (!domainPoint || byKey.has(domainPoint.key)) continue;
+      domainPoint.order = order++;
+      byKey.set(domainPoint.key, domainPoint);
     }
     const domain = [...byKey.values()];
-    if (domain.length > 0 && domain.every(point => point.sortable)) {
+    if (axisType === "time" || axisType === "number") {
       return domain.sort((a, b) => a.sort - b.sort || a.order - b.order);
     }
     return domain.sort((a, b) => a.order - b.order);
   }
 
-  function chartModelToSeries(model) {
+  function chartDomainPoint(raw, axisType, label) {
+    if (axisType === "time") {
+      const date = parseTime(raw);
+      if (!date) return null;
+      const value = date.getTime();
+      return {key: "t:" + value, value: value, label: label, sort: value};
+    }
+    if (axisType === "number") {
+      const value = Number(raw);
+      if (!Number.isFinite(value)) return null;
+      return {key: "n:" + value, value: value, label: formatValue(value, ""), sort: value};
+    }
+    const value = raw === null || raw === undefined ? "" : String(raw);
+    return {key: "c:" + value, value: value, label: label || value, sort: 0};
+  }
+
+  function chartModelToSeries(model, axis) {
+    const values = new Map();
+    for (const point of model.points || []) {
+      const domainPoint = chartDomainPoint(point.raw, axis.type, point.label);
+      if (domainPoint) values.set(domainPoint.key, point.value);
+    }
     return {
       name: model.name,
       type: model.type,
       areaStyle: model.areaStyle,
       showSymbol: model.showSymbol,
-      data: (model.points || []).map(point => [point.key, point.value]),
+      symbolSize: 5,
+      connectNulls: false,
+      emphasis: {focus: "series"},
+      data: axis.domain.map(point => [point.value, values.has(point.key) ? values.get(point.key) : null]),
     };
   }
 
@@ -1079,18 +1113,19 @@
     };
   }
 
-  function chartTooltip(trigger, axisLabels) {
+  function chartTooltip(trigger, axis) {
     const tooltip = {
       trigger: trigger,
       appendToBody: true,
       confine: false,
       extraCssText: "z-index:9999;",
     };
-    if (trigger === "axis" && axisLabels) {
+    if (trigger === "axis" && axis) {
       tooltip.formatter = params => {
         const items = Array.isArray(params) ? params : [params];
         if (items.length === 0) return "";
-        const title = axisLabels[String(items[0].axisValue)] || String(items[0].axisValue || "");
+        const firstValue = Array.isArray(items[0].value) ? items[0].value[0] : items[0].axisValue;
+        const title = formatChartAxisTick(firstValue, axis);
         const lines = [escapeHTML(title)];
         for (const item of items) {
           const value = Array.isArray(item.value) ? item.value[1] : item.value;
@@ -1101,6 +1136,15 @@
       };
     }
     return tooltip;
+  }
+
+  function formatChartAxisTick(value, axis) {
+    if (axis.type === "time") {
+      const n = Number(value);
+      if (Number.isFinite(n)) return formatDate(new Date(n), axis.column, false);
+    }
+    if (axis.type === "number") return formatValue(Number(value), "");
+    return axis.labels[String(value)] || String(value || "");
   }
 
   function escapeHTML(value) {
@@ -1228,8 +1272,13 @@
     if (!date) return String(value);
     const text = String(value);
     const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(text);
+    return formatDate(date, column, dateOnly);
+  }
+
+  function formatDate(date, column, dateOnly) {
+    const dateBucket = /(^|_)(date|day|week|month)(_|$)/i.test(column || "");
     const hourBucket = /(^|_)hour(_|$)/i.test(column || "");
-    const opts = dateOnly && !hourBucket
+    const opts = (dateOnly || dateBucket) && !hourBucket
       ? {month: "short", day: "numeric", timeZone: state.timezone}
       : {month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: state.timezone};
     return new Intl.DateTimeFormat(undefined, opts).format(date);
