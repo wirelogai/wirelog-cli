@@ -10,15 +10,8 @@ timezone: UTC
 variables:
   range:
     label: Range
-    type: select
+    type: date_range
     default: 30d
-    options:
-      - label: 7d
-        value: 7d
-      - label: 30d
-        value: 30d
-      - label: 90d
-        value: 90d
   platform:
     label: Platform
     type: select
@@ -45,21 +38,21 @@ sections:
         kind: metric
         viz: number
         layout: {w: 3, h: 2}
-        query: '* | last {{range}} {{platform.fragment}} | count'
+        query: '* {{range.stage}} {{platform.fragment}} | count'
 
       - id: active-users
         title: Active Users
         kind: metric
         viz: number
         layout: {w: 3, h: 2}
-        query: '* | last {{range}} {{platform.fragment}} | unique user_id'
+        query: '* {{range.stage}} {{platform.fragment}} | unique user_id'
 
       - id: events-by-day
         title: Events by Day
         kind: chart
         viz: line
         layout: {w: 6, h: 4}
-        query: '* | last {{range}} {{platform.fragment}} | count by day'
+        query: '* {{range.stage}} {{platform.fragment}} | count by day'
 
   - title: Acquisition
     cards:
@@ -68,14 +61,14 @@ sections:
         kind: table
         viz: table
         layout: {w: 6, h: 4}
-        query: '* | last {{range}} {{platform.fragment}} | count by event_type | top 20'
+        query: '* {{range.stage}} {{platform.fragment}} | count by event_type | top 20'
 
       - id: platform-breakdown
         title: Platform Breakdown
         kind: chart
         viz: bar
         layout: {w: 6, h: 4}
-        query: '* | last {{range}} | count by _platform | top 10'
+        query: '* {{range.stage}} | count by _platform | top 10'
 
   - title: Activation
     cards:
@@ -84,7 +77,7 @@ sections:
         kind: funnel
         viz: funnel
         layout: {w: 12, h: 5}
-        query: funnel page_view -> signup -> activate | last {{range}}
+        query: funnel page_view -> signup -> activate {{range.stage}}
 
       - id: activation-trends
         title: Activation Trends
@@ -93,9 +86,9 @@ sections:
         layout: {w: 12, h: 4}
         queries:
           - name: Signups
-            query: signup | last {{range}} {{platform.fragment}} | count by day
+            query: signup {{range.stage}} {{platform.fragment}} | count by day
           - name: Activations
-            query: activate | last {{range}} {{platform.fragment}} | count by day
+            query: activate {{range.stage}} {{platform.fragment}} | count by day
 
   - title: Discovery
     cards:
@@ -104,7 +97,7 @@ sections:
         kind: inspect
         viz: table
         layout: {w: 12, h: 5}
-        query: inspect * | last {{range}}
+        query: inspect * {{range.stage}}
 
   - title: Notes
     cards:
@@ -136,7 +129,7 @@ const SchemaJSON = `{
         "required": ["type"],
         "properties": {
           "label": {"type": "string"},
-          "type": {"enum": ["select", "input"]},
+          "type": {"enum": ["select", "input", "date_range"]},
           "default": {"type": "string"},
           "input": {"enum": ["email"]},
           "placeholder": {"type": "string"},

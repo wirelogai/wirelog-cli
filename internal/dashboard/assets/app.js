@@ -176,6 +176,11 @@
         el.vars.appendChild(wrap);
         continue;
       }
+      if (variable.type === "date_range") {
+        renderDateRangeVariable(name, variable, wrap, label);
+        el.vars.appendChild(wrap);
+        continue;
+      }
       const select = document.createElement("select");
       for (const opt of variable.options || []) {
         const option = document.createElement("option");
@@ -194,6 +199,74 @@
       wrap.append(label, select);
       el.vars.appendChild(wrap);
     }
+  }
+
+  function renderDateRangeVariable(name, variable, wrap, label) {
+    wrap.className = "var date-range-var";
+    const controls = document.createElement("form");
+    controls.className = "date-range-control";
+    const select = document.createElement("select");
+    const options = dateRangeOptions(variable);
+    for (const opt of options) {
+      const option = document.createElement("option");
+      option.value = opt.value;
+      option.textContent = opt.label || opt.value;
+      select.appendChild(option);
+    }
+    const value = state.variables[name] || variable.default || "30d";
+    select.value = dateRangeSelectValue(value);
+    const custom = document.createElement("span");
+    custom.className = "date-range-custom";
+    const parts = customDateRangeParts(value) || defaultCustomDateRangeParts();
+    const from = document.createElement("input");
+    from.type = "date";
+    from.value = parts.from;
+    const to = document.createElement("input");
+    to.type = "date";
+    to.value = parts.to;
+    const apply = document.createElement("button");
+    apply.type = "submit";
+    apply.textContent = "apply";
+    custom.append(from, to, apply);
+    const syncCustomVisibility = () => {
+      custom.hidden = select.value !== "custom";
+    };
+    syncCustomVisibility();
+    controls.append(select, custom);
+    controls.addEventListener("submit", event => {
+      event.preventDefault();
+      if (payload.mode === "report") return;
+      if (select.value === "custom") {
+        try {
+          state.variables[name] = customDateRangeValue(from.value, to.value);
+        } catch (err) {
+          setStatus(err.message || String(err));
+          return;
+        }
+      }
+      rerunForVariableChange();
+    });
+    select.addEventListener("change", () => {
+      if (payload.mode === "report") return;
+      syncCustomVisibility();
+      if (select.value !== "custom") {
+        state.variables[name] = select.value;
+        rerunForVariableChange();
+      }
+    });
+    if (payload.mode === "report") {
+      select.disabled = true;
+      from.disabled = true;
+      to.disabled = true;
+      apply.disabled = true;
+    }
+    wrap.append(label, controls);
+  }
+
+  function rerunForVariableChange() {
+    state.visibleCardIDs.clear();
+    resetResults();
+    renderSections();
   }
 
   function renderTimezone() {
@@ -543,7 +616,7 @@
   }
 
   function renderTemplate(query) {
-    return query.replace(/\{\{\s*([A-Za-z_][A-Za-z0-9_]*)(?:\.([A-Za-z_][A-Za-z0-9_]*))?\s*\}\}/g, function (_, name, attr) {
+    let out = query.replace(/\{\{\s*([A-Za-z_][A-Za-z0-9_]*)(?:\.([A-Za-z_][A-Za-z0-9_]*))?\s*\}\}/g, function (_, name, attr) {
       const variable = state.dashboard.variables[name];
       if (!variable) return "";
       const selected = state.variables[name] || variable.default;
@@ -556,10 +629,98 @@
         }
         return "";
       }
+      if (variable.type === "date_range") {
+        if (!attr) return selected || variable.default || "30d";
+        if (attr === "stage" || attr === "fragment") return dateRangeStage(selected || variable.default || "30d");
+        return "";
+      }
       const opt = (variable.options || []).find(o => o.value === selected);
       if (!opt) return "";
       return attr === "fragment" ? (opt.fragment || "") : opt.value;
-    }).replace(/\s+/g, " ").trim();
+    });
+    out = out.replace(/\s+/g, " ").trim();
+    return normalizeLegacyDateRangeLastStages(out);
+  }
+
+  function dateRangeOptions(variable) {
+    const options = (variable.options || []).slice();
+    const defaults = [
+      {label: "7 days", value: "7d"},
+      {label: "30 days", value: "30d"},
+      {label: "90 days", value: "90d"},
+      {label: "This month", value: "this_month"},
+      {label: "Last month", value: "last_month"},
+      {label: "Custom", value: "custom"},
+    ];
+    const seen = new Set(options.map(opt => opt.value));
+    for (const opt of defaults) {
+      if (!seen.has(opt.value)) options.push(opt);
+    }
+    return options;
+  }
+
+  function dateRangeSelectValue(value) {
+    return String(value || "").startsWith("custom:") ? "custom" : value;
+  }
+
+  function customDateRangeParts(value) {
+    const match = String(value || "").match(/^custom:(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$/);
+    if (!match) return null;
+    return {from: match[1], to: match[2]};
+  }
+
+  function defaultCustomDateRangeParts() {
+    const end = new Date();
+    const start = new Date(end);
+    start.setDate(start.getDate() - 30);
+    return {from: dateInputValue(start), to: dateInputValue(end)};
+  }
+
+  function customDateRangeValue(from, to) {
+    if (!validDateInput(from) || !validDateInput(to) || from >= to) {
+      throw new Error("custom range needs a start date before the end date");
+    }
+    return "custom:" + from + ".." + to;
+  }
+
+  function dateRangeStage(value) {
+    const selected = String(value || "30d").trim();
+    if (/^[1-9][0-9]*[hdwmy]$/.test(selected)) return "| last " + selected;
+    if (selected === "today") return "| today";
+    if (selected === "yesterday") return "| yesterday";
+    if (selected === "this_week") return "| this week";
+    if (selected === "this_month") return "| this month";
+    if (selected === "this_quarter") return "| this quarter";
+    if (selected === "this_year") return "| this year";
+    if (selected === "last_month") {
+      const now = new Date();
+      const end = new Date(now.getFullYear(), now.getMonth(), 1);
+      const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      return "| from " + dateInputValue(start) + " to " + dateInputValue(end);
+    }
+    const custom = customDateRangeParts(selected);
+    if (custom) {
+      if (custom.from >= custom.to) throw new Error("custom range needs a start date before the end date");
+      return "| from " + custom.from + " to " + custom.to;
+    }
+    throw new Error("unsupported date range " + selected);
+  }
+
+  function normalizeLegacyDateRangeLastStages(query) {
+    return query.replace(/\|\s*last\s+(today|yesterday|this_week|this_month|this_quarter|this_year|last_month|custom:\d{4}-\d{2}-\d{2}\.\.\d{4}-\d{2}-\d{2})/g, function (_, value) {
+      return dateRangeStage(value);
+    });
+  }
+
+  function validDateInput(value) {
+    return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ""));
+  }
+
+  function dateInputValue(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return year + "-" + month + "-" + day;
   }
 
   function inputFragment(variable, fragmentName, value) {

@@ -169,6 +169,23 @@ h2 {
   min-width: 260px;
 }
 
+.date-range-control {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.date-range-custom {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.date-range-custom input {
+  width: 132px;
+}
+
 .status {
   min-height: 18px;
   padding-top: 10px;

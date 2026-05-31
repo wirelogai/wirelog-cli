@@ -9,6 +9,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -57,6 +58,8 @@ const (
 	VariableSelect VariableType = "select"
 	// VariableInput is a submitted text input with safe fragment generation.
 	VariableInput VariableType = "input"
+	// VariableDateRange is a shared dashboard date-range control.
+	VariableDateRange VariableType = "date_range"
 )
 
 // VariableOption is one allowed value for a variable.
@@ -185,6 +188,7 @@ func Load(r io.Reader) (*Dashboard, []byte, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("parse dashboard YAML: %w", err)
 	}
+	normalizeDashboard(&d)
 	return &d, src, nil
 }
 
@@ -215,6 +219,7 @@ func Validate(d *Dashboard) error {
 	if d == nil {
 		return fmt.Errorf("dashboard is nil")
 	}
+	normalizeDashboard(d)
 	if d.Version != 1 {
 		errs = append(errs, "version must be 1")
 	}
@@ -239,8 +244,10 @@ func validateVariables(d *Dashboard, errs *[]string) {
 			validateSelectVariable(name, variable, d, errs)
 		case VariableInput:
 			validateInputVariable(name, variable, errs)
+		case VariableDateRange:
+			validateDateRangeVariable(name, variable, errs)
 		default:
-			*errs = append(*errs, fmt.Sprintf("variable %q type must be select or input", name))
+			*errs = append(*errs, fmt.Sprintf("variable %q type must be select, input, or date_range", name))
 		}
 	}
 }
@@ -305,6 +312,33 @@ func validateInputVariable(name string, variable Variable, errs *[]string) {
 		}
 		if variable.AllowDomain && !fieldNameRE.MatchString(fragment.DomainField) {
 			*errs = append(*errs, fmt.Sprintf("variable %q fragment %q domain_field is required for domain wildcards", name, fragmentName))
+		}
+	}
+}
+
+func validateDateRangeVariable(name string, variable Variable, errs *[]string) {
+	if strings.TrimSpace(variable.Query) != "" {
+		*errs = append(*errs, fmt.Sprintf("variable %q date_range variables cannot define query", name))
+	}
+	if variable.FragmentTemplate != "" || variable.Input != "" || len(variable.Fragments) > 0 {
+		*errs = append(*errs, fmt.Sprintf("variable %q date_range variables cannot define input or fragment templates", name))
+	}
+	_, err := dateRangeStage(variable.Default, time.Now())
+	if err != nil {
+		*errs = append(*errs, fmt.Sprintf("variable %q default is invalid: %s", name, err.Error()))
+	}
+	for _, opt := range variable.Options {
+		if opt.Value == "" {
+			*errs = append(*errs, fmt.Sprintf("variable %q has option with empty value", name))
+		}
+		if opt.Value != "" && !optionValueRE.MatchString(opt.Value) {
+			*errs = append(*errs, fmt.Sprintf("variable %q option %q has unsafe value", name, opt.Value))
+		}
+		if opt.Fragment != "" {
+			*errs = append(*errs, fmt.Sprintf("variable %q option %q cannot define fragment", name, opt.Value))
+		}
+		if !validDateRangeOptionValue(opt.Value) {
+			*errs = append(*errs, fmt.Sprintf("variable %q option %q is not a supported date range", name, opt.Value))
 		}
 	}
 }

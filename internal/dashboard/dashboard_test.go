@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/wirelogai/wirelog-cli/internal/client"
 )
@@ -28,7 +29,7 @@ func TestRenderQueryTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load starter: %v", err)
 	}
-	got, err := RenderQueryTemplate(`* | last {{range}} {{platform.fragment}} | count`, d, map[string]string{
+	got, err := RenderQueryTemplate(`* {{range.stage}} {{platform.fragment}} | count`, d, map[string]string{
 		"range":    "7d",
 		"platform": "web",
 	})
@@ -38,6 +39,58 @@ func TestRenderQueryTemplate(t *testing.T) {
 	want := `* | last 7d | where _platform = "web" | count`
 	if got != want {
 		t.Fatalf("query mismatch\nwant: %s\n got: %s", want, got)
+	}
+}
+
+func TestRenderQueryTemplateDateRange(t *testing.T) {
+	d, _, err := Load(strings.NewReader(`version: 1
+title: Test
+sections:
+  - title: One
+    cards:
+      - id: a
+        title: A
+        kind: chart
+        viz: line
+        query: '* {{range.stage}} | count'
+      - id: b
+        title: B
+        kind: chart
+        viz: line
+        query: '* | last {{range}} | count'
+`))
+	if err != nil {
+		t.Fatalf("load dashboard: %v", err)
+	}
+	if gotType := d.Variables["range"].Type; gotType != VariableDateRange {
+		t.Fatalf("range type = %q, want %q", gotType, VariableDateRange)
+	}
+	got, err := RenderQueryTemplate(d.Sections[0].Cards[0].Query, d, nil)
+	if err != nil {
+		t.Fatalf("render default range: %v", err)
+	}
+	want := `* | last 30d | count`
+	if got != want {
+		t.Fatalf("default range mismatch\nwant: %s\n got: %s", want, got)
+	}
+	got, err = RenderQueryTemplate(d.Sections[0].Cards[1].Query, d, map[string]string{"range": "custom:2026-01-01..2026-02-01"})
+	if err != nil {
+		t.Fatalf("render custom range: %v", err)
+	}
+	want = `* | from 2026-01-01 to 2026-02-01 | count`
+	if got != want {
+		t.Fatalf("custom range mismatch\nwant: %s\n got: %s", want, got)
+	}
+}
+
+func TestDateRangeStageLastMonth(t *testing.T) {
+	stage, err := dateRangeStage("last_month", time.Date(2026, time.May, 31, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("date range stage: %v", err)
+	}
+	want := `| from 2026-04-01 to 2026-05-01`
+	if stage != want {
+		t.Fatalf("stage mismatch\nwant: %s\n got: %s", want, stage)
 	}
 }
 
@@ -93,7 +146,7 @@ sections:
 }
 
 func TestValidateRejectsUnknownVariable(t *testing.T) {
-	src := strings.Replace(StarterYAML, "{{range}}", "{{missing}}", 1)
+	src := strings.Replace(StarterYAML, "{{range.stage}}", "{{missing}}", 1)
 	d, _, err := Load(strings.NewReader(src))
 	if err != nil {
 		t.Fatalf("load dashboard: %v", err)

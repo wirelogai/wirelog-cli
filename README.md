@@ -47,10 +47,10 @@ wl dashboard save --file dashboard.yaml --output index.html --mode report
 
 | Command | Description | Key Type |
 |---|---|---|
-| `wl query [dsl] [--query ...]` | Run one query or a query list | `sk_` / `aat_` (query) |
+| `wl query [dsl] [--query ...]` | Run one query or a query list | `aat_` personal token or `sk_` |
 | `wl track <event>` | Send tracking events | `pk_` / `sk_` / `aat_` (track) |
 | `wl identify` | Set user profile properties | `pk_` / `sk_` / `aat_` (track) |
-| `wl inspect [event]` | Discover events and properties | `sk_` / `aat_` (query) |
+| `wl inspect [event]` | Discover events and properties | `aat_` personal token or `sk_` |
 | `wl dashboard init\|schema\|validate\|run\|view\|save` | Create, validate, run, view, and export YAML dashboards | varies |
 | `wl project list\|create\|get\|delete\|usage` | Manage projects | `ak_` (admin) |
 | `wl gdpr export\|delete` | GDPR data export/deletion | `sk_` / `aat_` (admin) |
@@ -137,7 +137,7 @@ wl dashboard save --file dashboard.yaml --output - --mode report
 Export modes:
 
 - `report`: fixed data, preloaded into the HTML, no key embedded.
-- `interactive`: embeds an `aat_` token with query scope so date ranges and variables can re-query from the browser.
+- `interactive`: embeds a query-scoped `aat_` token so date ranges and variables can re-query from the browser. Team members should use their own personal query token, not a shared `sk_`.
 
 ```bash
 export WIRELOG_DASHBOARD_TOKEN=aat_xxx
@@ -153,7 +153,7 @@ Agent workflow:
 - validate with `wl dashboard validate --file dashboard.yaml`
 - run data with `wl dashboard run --file dashboard.yaml --json`
 
-Dashboard variables are shared anchors. Changing one variable, such as `range`, updates every card that references it with `{{range}}` or `{{platform.fragment}}`.
+Dashboards automatically include a normalized `range` date-range control unless they define their own `variables.range`. Use `{{range.stage}}` in queries to insert a full time stage such as `| last 30d`, last month, or a custom start/end range; older `| last {{range}}` templates remain compatible. Other dashboard variables are shared anchors such as `{{platform.fragment}}`.
 When viewing a dashboard directory, add root-level `order: 10` values to control sidebar order; unordered dashboards sort by filename after ordered dashboards.
 Directory dashboards also get stable local routes like `/dashboard/usage.yaml`; extensionless routes like `/dashboard/usage` resolve when unambiguous.
 User lookup dashboards can use submitted `type: input` email variables with named fragments like `{{subject.events_fragment}}` and `{{subject.users_fragment}}`; `*@domain.com` becomes a safe domain equality filter.

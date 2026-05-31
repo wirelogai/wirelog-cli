@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 )
 
 var templateRefRE = regexp.MustCompile(`\{\{\s*([A-Za-z_][A-Za-z0-9_]*)(?:\.([A-Za-z_][A-Za-z0-9_]*))?\s*\}\}`)
@@ -13,6 +14,7 @@ var domainWildcardRE = regexp.MustCompile(`^\*@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$`)
 type resolvedVariable struct {
 	Value     string
 	Fragment  string
+	Stage     string
 	Fragments map[string]string
 }
 
@@ -42,6 +44,15 @@ func ResolveVariables(d *Dashboard, selected map[string]string) (map[string]reso
 				return nil, fmt.Errorf("variable %q value %q is not allowed", name, value)
 			}
 			resolved[name] = resolvedVariable{Value: opt.Value, Fragment: opt.Fragment}
+		case VariableDateRange:
+			if value == "" {
+				value = variable.Default
+			}
+			stage, err := dateRangeStage(value, time.Now())
+			if err != nil {
+				return nil, fmt.Errorf("variable %q value %q is not allowed: %w", name, value, err)
+			}
+			resolved[name] = resolvedVariable{Value: value, Fragment: stage, Stage: stage}
 		case VariableInput:
 			input, err := parseEmailInput(value, variable.AllowDomain)
 			if err != nil {
@@ -86,6 +97,12 @@ func RenderQueryTemplate(query string, d *Dashboard, selected map[string]string)
 			return opt.Value
 		case "fragment":
 			return opt.Fragment
+		case "stage":
+			if opt.Stage == "" {
+				renderErr = fmt.Errorf("unsupported variable attribute %q in %q", attr, token)
+				return token
+			}
+			return opt.Stage
 		default:
 			if strings.HasSuffix(attr, "_fragment") {
 				fragmentName := strings.TrimSuffix(attr, "_fragment")
@@ -100,7 +117,12 @@ func RenderQueryTemplate(query string, d *Dashboard, selected map[string]string)
 	if renderErr != nil {
 		return "", renderErr
 	}
-	return strings.Join(strings.Fields(out), " "), nil
+	rendered := strings.Join(strings.Fields(out), " ")
+	rendered, err = normalizeLegacyDateRangeLastStages(rendered)
+	if err != nil {
+		return "", err
+	}
+	return rendered, nil
 }
 
 func validateTemplateRefs(loc, query string, variables map[string]Variable, errs *[]string) {
@@ -114,7 +136,13 @@ func validateTemplateRefs(loc, query string, variables map[string]Variable, errs
 			continue
 		}
 		if attr == "" || attr == "fragment" {
-			if attr == "fragment" && variable.Type != VariableSelect {
+			if attr == "fragment" && variable.Type != VariableSelect && variable.Type != VariableDateRange {
+				*errs = append(*errs, fmt.Sprintf("%s references unsupported variable attribute %q", loc, attr))
+			}
+			continue
+		}
+		if attr == "stage" {
+			if variable.Type != VariableDateRange {
 				*errs = append(*errs, fmt.Sprintf("%s references unsupported variable attribute %q", loc, attr))
 			}
 			continue
