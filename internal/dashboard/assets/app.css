@@ -81,11 +81,16 @@ input:hover, input:focus {
 
 .topbar {
   display: grid;
-  grid-template-columns: 1fr auto auto;
-  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px 16px;
   align-items: end;
   border-bottom: 1px solid var(--border);
   padding-bottom: 14px;
+}
+
+.topbar-title {
+  grid-column: 1 / -1;
+  min-width: 0;
 }
 
 h1, h2, h3, p { margin: 0; }
@@ -114,6 +119,14 @@ h2 {
   gap: 8px;
   align-items: center;
   flex-wrap: wrap;
+}
+
+.vars {
+  justify-content: flex-start;
+}
+
+.actions {
+  justify-content: flex-end;
 }
 
 .settings {
@@ -398,6 +411,7 @@ textarea {
     padding-bottom: 12px;
   }
   .topbar { grid-template-columns: 1fr; }
+  .actions { justify-content: flex-start; }
   .section-grid { grid-template-columns: 1fr; }
   .panel { grid-column: span 1; }
 }
