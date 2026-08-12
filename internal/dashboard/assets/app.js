@@ -9,11 +9,12 @@
     timezone: initialTimezone(payload.dashboard),
     visibleCardIDs: new Set(),
     loadingCardIDs: new Set(),
-    pendingCardIDs: new Set(),
+    pendingCardIDs: new Map(),
     visibleTimers: new Map(),
     tableSorts: new Map(),
     batchTimer: null,
-    batchForce: false,
+    activeCardRuns: 0,
+    runGeneration: 0,
     observer: null,
     raw: "",
     etag: "",
@@ -361,8 +362,10 @@
   }
 
   function resetResults() {
+    state.runGeneration++;
     state.results = [];
     state.loadingCardIDs.clear();
+    state.activeCardRuns = 0;
     clearVisibleTimers();
     clearPendingBatch();
   }
@@ -481,18 +484,14 @@
   }
 
   function queueCards(cardIDs, options) {
-    for (const id of cardIDs || []) {
-      state.pendingCardIDs.add(id);
+    const force = !!(options && options.force);
+    for (const id of orderedCardIDs(cardIDs || [])) {
+      state.pendingCardIDs.set(id, force || state.pendingCardIDs.get(id) || false);
     }
-    state.batchForce = state.batchForce || !!(options && options.force);
     if (state.batchTimer) return;
     state.batchTimer = setTimeout(() => {
-      const ids = [...state.pendingCardIDs];
-      const force = state.batchForce;
-      state.pendingCardIDs.clear();
       state.batchTimer = null;
-      state.batchForce = false;
-      runCards(ids, {force: force});
+      drainCardQueue();
     }, 75);
   }
 
@@ -502,14 +501,41 @@
       state.batchTimer = null;
     }
     state.pendingCardIDs.clear();
-    state.batchForce = false;
+  }
+
+  function orderedCardIDs(ids) {
+    const order = new Map(runnableCardIDs().map((id, index) => [id, index]));
+    return [...new Set(ids || [])].sort((a, b) => {
+      const ai = order.has(a) ? order.get(a) : Number.MAX_SAFE_INTEGER;
+      const bi = order.has(b) ? order.get(b) : Number.MAX_SAFE_INTEGER;
+      return ai - bi;
+    });
+  }
+
+  function drainCardQueue() {
+    if (!state.dashboard) return;
+    while (state.activeCardRuns < 2 && state.pendingCardIDs.size > 0) {
+      const next = state.pendingCardIDs.entries().next().value;
+      if (!next) return;
+      const [id, force] = next;
+      state.pendingCardIDs.delete(id);
+      state.activeCardRuns++;
+      const generation = state.runGeneration;
+      runCards([id], {force: force, generation: generation}).finally(() => {
+        if (generation !== state.runGeneration) return;
+        state.activeCardRuns = Math.max(0, state.activeCardRuns - 1);
+        drainCardQueue();
+      });
+    }
   }
 
   async function runCards(cardIDs, options) {
     if (!state.dashboard) return;
+    const generation = options && Number.isFinite(options.generation) ? options.generation : state.runGeneration;
     const missing = missingRequiredInput();
     if (missing) {
       setStatus(missing + " is required");
+      clearPendingBatch();
       return;
     }
     const force = !!(options && options.force);
@@ -540,11 +566,13 @@
       } else if (payload.mode === "interactive") {
         results = await runInteractive(ids);
       }
+      if (generation !== state.runGeneration) return;
       mergeResults(ids, results);
       setStatus("updated " + new Date().toLocaleTimeString());
     } catch (err) {
-      setStatus(err.message || String(err));
+      if (generation === state.runGeneration) setStatus(err.message || String(err));
     } finally {
+      if (generation !== state.runGeneration) return;
       for (const id of ids) state.loadingCardIDs.delete(id);
       refreshCards(ids);
     }
@@ -995,36 +1023,54 @@
     const areaLike = card.viz === "area";
     const chartSeries = effectiveSeries.flatMap(s => responseToChartSeries(s, card, lineLike, areaLike));
     const xAxis = chartAxisModel(chartSeries);
+    const directLabels = false;
+    const showLegend = !directLabels && chartSeries.length > 1 && chartSeries.length <= 4;
+    const palette = chartPalette();
     return {
-      backgroundColor: "#000",
+      backgroundColor: "transparent",
       color: chartPalette(),
       tooltip: chartTooltip("axis", xAxis),
-      grid: {left: 12, right: 18, top: 18, bottom: 62, containLabel: true},
+      grid: {left: 8, right: directLabels ? 118 : 30, top: 12, bottom: showLegend ? 42 : 24, containLabel: true},
       xAxis: chartXAxis(xAxis),
       yAxis: {
         type: "value",
-        axisLabel: {color: "#7a8a7a", margin: 10},
-        splitLine: {lineStyle: {color: "#1d2a20"}},
+        axisLabel: {color: "#7b8378", margin: 10, fontSize: 11},
+        axisLine: {show: false},
+        axisTick: {show: false},
+        splitLine: {lineStyle: {color: "#182019"}},
       },
-      legend: {textStyle: {color: "#7a8a7a"}, bottom: 4, type: "scroll"},
-      series: chartSeries.map(model => chartModelToSeries(model, xAxis)),
+      legend: showLegend ? {
+        type: "plain",
+        data: chartSeries.map(model => model.name),
+        bottom: 2,
+        itemWidth: 18,
+        itemHeight: 2,
+        icon: "rect",
+        textStyle: {color: "#7b8378", fontSize: 11},
+        formatter: name => compactSeriesName(name),
+      } : {show: false},
+      series: chartSeries.flatMap((model, index) => chartModelToSeries(model, xAxis, directLabels, palette[index % palette.length])),
     };
   }
 
   function chartPalette() {
-    return ["#00ff88", "#ffffff", "#7a8a7a", "#ff6b6b", "#2dd4bf", "#facc15", "#60a5fa", "#f472b6", "#fb923c", "#a78bfa", "#34d399", "#e5e7eb"];
+    return ["#21c785", "#d9d4c7", "#91a58f", "#c96d5d", "#56aaa0", "#d4a62a", "#638bc2", "#b981b6", "#c47a43", "#8e81bd", "#6faa6e", "#cdd5c9"];
   }
 
   function chartXAxis(axis) {
     const xAxis = {
       type: axis.type === "category" ? "category" : axis.type === "number" ? "value" : "time",
       axisLabel: {
-        color: "#7a8a7a",
+        color: "#7b8378",
         hideOverlap: true,
+        showMaxLabel: true,
         margin: 12,
+        fontSize: 11,
         formatter: value => formatChartAxisTick(value, axis),
       },
-      axisLine: {lineStyle: {color: "#1d2a20"}},
+      axisLine: {show: false},
+      axisTick: {show: false},
+      splitLine: {show: false},
     };
     if (axis.type === "category") {
       xAxis.data = axis.domain.map(point => point.value);
@@ -1117,14 +1163,45 @@
 
   function rowsToChartSeries(name, rows, xCol, yCol, lineLike, areaLike) {
     const sorted = sortRowsForAxis(rows, xCol);
+    const points = sorted.map(r => chartPoint(r, xCol, yCol));
+    const plotted = lineLike ? markPartialBucketPoints(points, xCol) : points;
     return {
       xCol: xCol,
       name: name,
       type: lineLike ? "line" : "bar",
       areaStyle: areaLike ? {} : undefined,
-      showSymbol: sorted.length <= 80,
-      points: sorted.map(r => chartPoint(r, xCol, yCol)),
+      showSymbol: plotted.length <= 80,
+      points: plotted,
     };
+  }
+
+  function markPartialBucketPoints(points, xCol) {
+    const bucket = timeBucketGranularity(xCol);
+    if (!bucket) return points;
+    const hasCompletePoint = points.some(point => !isActiveTimeBucket(point.raw, bucket));
+    if (!hasCompletePoint) return points;
+    return points.map(point => ({...point, partial: isActiveTimeBucket(point.raw, bucket)}));
+  }
+
+  function timeBucketGranularity(column) {
+    const name = String(column || "");
+    if (/(^|_)hour(_|$)/i.test(name)) return "hour";
+    if (/(^|_)day(_|$)|(^|_)date(_|$)/i.test(name)) return "day";
+    if (/(^|_)week(_|$)/i.test(name)) return "week";
+    if (/(^|_)month(_|$)/i.test(name)) return "month";
+    return "";
+  }
+
+  function isActiveTimeBucket(value, bucket) {
+    const start = parseTime(value);
+    if (!start) return false;
+    const end = new Date(start.getTime());
+    if (bucket === "hour") end.setUTCHours(end.getUTCHours() + 1);
+    if (bucket === "day") end.setUTCDate(end.getUTCDate() + 1);
+    if (bucket === "week") end.setUTCDate(end.getUTCDate() + 7);
+    if (bucket === "month") end.setUTCMonth(end.getUTCMonth() + 1);
+    const now = new Date();
+    return now >= start && now < end;
   }
 
   function chartPoint(row, xCol, yCol) {
@@ -1199,22 +1276,79 @@
     return {key: "c:" + value, value: value, label: label || value, sort: 0};
   }
 
-  function chartModelToSeries(model, axis) {
+  function chartModelToSeries(model, axis, directLabels, color) {
     const values = new Map();
     for (const point of model.points || []) {
       const domainPoint = chartDomainPoint(point.raw, axis.type, point.label);
-      if (domainPoint) values.set(domainPoint.key, point.value);
+      if (domainPoint) values.set(domainPoint.key, point);
     }
-    return {
+    const completeData = axis.domain.map(point => {
+      const value = values.get(point.key);
+      return [point.value, value && !value.partial ? value.value : null];
+    });
+    const base = {
       name: model.name,
       type: model.type,
       areaStyle: model.areaStyle,
-      showSymbol: model.showSymbol,
-      symbolSize: 5,
+      showSymbol: false,
+      symbol: "none",
+      symbolSize: 0,
+      itemStyle: {color: color},
+      lineStyle: {color: color, width: 1.45},
       connectNulls: false,
-      emphasis: {focus: "series"},
-      data: axis.domain.map(point => [point.value, values.has(point.key) ? values.get(point.key) : null]),
+      endLabel: directLabels ? {
+        show: true,
+        formatter: params => compactSeriesName(params.seriesName),
+        color: "#aeb7aa",
+        fontSize: 11,
+        distance: 8,
+      } : undefined,
+      labelLayout: directLabels ? {moveOverlap: "shiftY"} : undefined,
+      emphasis: {focus: "series", lineStyle: {width: 2.2}},
+      data: completeData,
     };
+    const partialIndex = axis.domain.findIndex(point => {
+      const value = values.get(point.key);
+      return value && value.partial;
+    });
+    if (partialIndex < 0) return [base];
+
+    const partialData = axis.domain.map(point => [point.value, null]);
+    let previousIndex = partialIndex - 1;
+    while (previousIndex >= 0 && completeData[previousIndex][1] === null) previousIndex--;
+    if (previousIndex >= 0) {
+      partialData[previousIndex] = {
+        value: completeData[previousIndex],
+        partialBridge: true,
+      };
+    }
+    const partialPoint = values.get(axis.domain[partialIndex].key);
+    partialData[partialIndex] = {
+      value: [axis.domain[partialIndex].value, partialPoint.value],
+      partial: true,
+    };
+    const partial = {
+      name: model.name,
+      type: "line",
+      areaStyle: undefined,
+      showSymbol: false,
+      symbol: "none",
+      symbolSize: 0,
+      itemStyle: {color: color, opacity: .7},
+      lineStyle: {color: color, width: 1.45, type: "dashed", opacity: .7},
+      connectNulls: false,
+      emphasis: {focus: "series", lineStyle: {width: 2.2, opacity: 1}},
+      data: partialData,
+      z: 3,
+    };
+    return [base, partial];
+  }
+
+  function compactSeriesName(name) {
+    const raw = String(name || "");
+    const parts = raw.split(" · ");
+    const label = parts[parts.length - 1] || raw;
+    return label.length > 34 ? label.slice(0, 31) + "..." : label;
   }
 
   function pieOption(series, card) {
@@ -1279,7 +1413,20 @@
       trigger: trigger,
       appendToBody: true,
       confine: false,
-      extraCssText: "z-index:9999;",
+      backgroundColor: "rgba(5, 6, 4, .94)",
+      borderColor: "#2a332b",
+      borderWidth: 1,
+      padding: [7, 9],
+      textStyle: {
+        color: "#d9d4c7",
+        fontFamily: "JetBrains Mono, Fira Code, Courier New, monospace",
+        fontSize: 11,
+      },
+      axisPointer: {
+        type: "line",
+        lineStyle: {color: "#667060", width: 1, type: "solid", opacity: .5},
+      },
+      extraCssText: "z-index:9999;box-shadow:none;border-radius:0;line-height:1.35;",
     };
     if (trigger === "axis" && axis) {
       tooltip.formatter = params => {
@@ -1287,13 +1434,38 @@
         if (items.length === 0) return "";
         const firstValue = Array.isArray(items[0].value) ? items[0].value[0] : items[0].axisValue;
         const title = formatChartAxisTick(firstValue, axis);
-        const lines = [escapeHTML(title)];
-        for (const item of items) {
-          const value = Array.isArray(item.value) ? item.value[1] : item.value;
-          if (value === null || value === undefined || value === "") continue;
-          lines.push((item.marker || "") + escapeHTML(item.seriesName || "") + ": " + escapeHTML(formatValue(value, "")));
+        const rows = items
+          .filter(item => !(item.data && item.data.partialBridge))
+          .map(item => {
+            const value = Array.isArray(item.value) ? item.value[1] : item.value;
+            const numeric = Number(value);
+            return {
+              color: item.color || "#d9d4c7",
+              name: compactSeriesName(item.seriesName || ""),
+              partial: !!(item.data && item.data.partial),
+              value: value,
+              sort: Number.isFinite(numeric) ? numeric : -Infinity,
+            };
+          })
+          .filter(item => item.value !== null && item.value !== undefined && item.value !== "");
+        const partialBucket = rows.some(item => item.partial);
+        rows.sort((a, b) => b.sort - a.sort);
+        const visible = rows.slice(0, 7);
+        const hidden = rows.length - visible.length;
+        const lines = [
+          '<div style="color:#9aa394;margin-bottom:5px;">' + escapeHTML(title) + (partialBucket ? ' <span style="color:#d4a62a;">· partial</span>' : "") + "</div>",
+          ...visible.map(item => (
+            '<div style="display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:8px;align-items:baseline;min-width:220px;max-width:360px;">' +
+            '<span style="width:14px;height:2px;background:' + escapeHTML(item.color) + ';display:inline-block;"></span>' +
+            '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHTML(item.name) + "</span>" +
+            '<span style="color:#f0eadf;">' + escapeHTML(formatValue(item.value, "")) + "</span>" +
+            "</div>"
+          )),
+        ];
+        if (hidden > 0) {
+          lines.push('<div style="color:#6f776c;margin-top:4px;">+' + hidden + " more</div>");
         }
-        return lines.join("<br>");
+        return lines.join("");
       };
     }
     return tooltip;
@@ -1423,7 +1595,7 @@
     if (!isTimeLike(value)) return null;
     const text = String(value);
     const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(text);
-    const parsed = Date.parse(dateOnly ? text + "T00:00:00" : text);
+    const parsed = Date.parse(dateOnly ? text + "T00:00:00Z" : text);
     if (Number.isNaN(parsed)) return null;
     return new Date(parsed);
   }
@@ -1439,9 +1611,10 @@
   function formatDate(date, column, dateOnly) {
     const dateBucket = /(^|_)(date|day|week|month)(_|$)/i.test(column || "");
     const hourBucket = /(^|_)hour(_|$)/i.test(column || "");
+    const timeZone = dateBucket && !hourBucket ? "UTC" : state.timezone;
     const opts = (dateOnly || dateBucket) && !hourBucket
-      ? {month: "short", day: "numeric", timeZone: state.timezone}
-      : {month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: state.timezone};
+      ? {month: "short", day: "numeric", timeZone: timeZone}
+      : {month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: timeZone};
     return new Intl.DateTimeFormat(undefined, opts).format(date);
   }
 

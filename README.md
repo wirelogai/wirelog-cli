@@ -157,7 +157,8 @@ Dashboards automatically include a normalized `range` date-range control unless 
 When viewing a dashboard directory, add root-level `order: 10` values to control sidebar order; unordered dashboards sort by filename after ordered dashboards.
 Directory dashboards also get stable local routes like `/dashboard/usage.yaml`; extensionless routes like `/dashboard/usage` resolve when unambiguous.
 User lookup dashboards can use submitted `type: input` email variables with named fragments like `{{subject.events_fragment}}` and `{{subject.users_fragment}}`; `*@domain.com` becomes a safe domain equality filter.
-Chart cards can set `options.x`, `options.y`, and `options.series` when a result has multiple plausible columns. Time bucket charts use chronological axes and align multi-series buckets so missing values render as gaps. Cards can also set `options.calculate: ratio` to divide the first query by the second query for filtered unit-economics metrics without relying on backend formula support.
+Chart cards can set `options.x`, `options.y`, and `options.series` when a result has multiple plausible columns. Time bucket charts use chronological axes and align multi-series buckets so missing values render as gaps; line and area charts keep the active bucket live and draw its final segment as dashed, with the tooltip marked `partial`. Cards can also set `options.calculate: ratio` to divide the first query by the second query for filtered unit-economics metrics without relying on backend formula support.
+Local and interactive dashboards progressively run visible cards in layout order, two at a time, so the first row can render before lower rows finish querying.
 
 ## Choices
 
