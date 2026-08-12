@@ -8,7 +8,7 @@ import (
 	"github.com/wirelogai/wirelog-cli/internal/client"
 )
 
-const defaultConcurrency = 32
+const defaultConcurrency = 8
 
 // QueryClient is the subset of the WireLog client used by dashboards.
 type QueryClient interface {

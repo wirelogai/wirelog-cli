@@ -70,6 +70,37 @@ func TestRetryOn429HonoursRetryAfter(t *testing.T) {
 	}
 }
 
+func TestQueryDoesNotRetry429(t *testing.T) {
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		attempts.Add(1)
+		w.Header().Set("Retry-After", "1")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":"query rate limit exceeded"}`))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "sk_test", "0.0.0", 5*time.Second)
+	_, err := c.QueryJSON(context.Background(), "* | count", 1, 0)
+	if err == nil {
+		t.Fatal("expected query rate-limit error")
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected APIError, got %T", err)
+	}
+	if apiErr.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("expected status 429, got %d", apiErr.StatusCode)
+	}
+	if apiErr.RetryAfter != "1" {
+		t.Errorf("expected Retry-After 1, got %q", apiErr.RetryAfter)
+	}
+	if attempts.Load() != 1 {
+		t.Errorf("expected one interactive query attempt, got %d", attempts.Load())
+	}
+}
+
 func TestNoRetryOn4xx(t *testing.T) {
 	var attempts atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

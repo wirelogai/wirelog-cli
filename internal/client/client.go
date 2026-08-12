@@ -148,7 +148,7 @@ func (c *Client) Query(ctx context.Context, q, format string, limit, offset int)
 		body["offset"] = offset
 	}
 
-	resp, err := c.doWithRetry(ctx, http.MethodPost, "/query", body)
+	resp, err := c.doQueryWithRetry(ctx, http.MethodPost, "/query", body)
 	if err != nil {
 		return nil, "", err
 	}
@@ -176,7 +176,7 @@ func (c *Client) QueryJSON(ctx context.Context, q string, limit, offset int) (*Q
 		body["offset"] = offset
 	}
 
-	resp, err := c.doWithRetry(ctx, http.MethodPost, "/query", body)
+	resp, err := c.doQueryWithRetry(ctx, http.MethodPost, "/query", body)
 	if err != nil {
 		return nil, err
 	}
@@ -376,6 +376,19 @@ func (c *Client) Health(ctx context.Context) (*HealthStatus, error) {
 // --- HTTP transport ---
 
 func (c *Client) doWithRetry(ctx context.Context, method, path string, body any) (*http.Response, error) {
+	return c.doWithRetryPolicy(ctx, method, path, body, true)
+}
+
+func (c *Client) doQueryWithRetry(ctx context.Context, method, path string, body any) (*http.Response, error) {
+	return c.doWithRetryPolicy(ctx, method, path, body, false)
+}
+
+func (c *Client) doWithRetryPolicy(
+	ctx context.Context,
+	method, path string,
+	body any,
+	retryRateLimits bool,
+) (*http.Response, error) {
 	var lastErr error
 	for attempt := range maxRetries {
 		resp, err := c.doRaw(ctx, method, path, body)
@@ -404,10 +417,11 @@ func (c *Client) doWithRetry(ctx context.Context, method, path string, body any)
 			apiErr.Message = string(respBody)
 		}
 
-		// Retry on 429 or 5xx with backoff. 5xx retries previously fell
-		// through as fatal errors, which made transient infra blips kill
-		// long stdin imports. 429 still uses Retry-After when present.
-		if isRetryableStatus(resp.StatusCode) && attempt < maxRetries-1 {
+		// Retry 5xx responses and, for mutation/import calls, 429 responses.
+		// Interactive queries surface 429 immediately so callers never appear
+		// hung behind an invisible Retry-After sleep.
+		retryable := isRetryableStatus(resp.StatusCode) && (resp.StatusCode != http.StatusTooManyRequests || retryRateLimits)
+		if retryable && attempt < maxRetries-1 {
 			delay := retryDelay(attempt, apiErr.RetryAfter)
 			lastErr = apiErr
 			select {

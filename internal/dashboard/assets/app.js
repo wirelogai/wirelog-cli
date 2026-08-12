@@ -1,4 +1,6 @@
 (function () {
+  const visibleLoadDelayMS = 400;
+  const maxCardsPerRun = 8;
   const payload = JSON.parse(document.getElementById("wirelog-payload").textContent);
   const state = {
     dashboard: payload.dashboard,
@@ -424,7 +426,7 @@
       if (state.visibleCardIDs.has(id)) {
         queueCards([id], {force: false});
       }
-    }, 2000);
+    }, visibleLoadDelayMS);
     state.visibleTimers.set(id, timer);
   }
 
@@ -514,14 +516,19 @@
 
   function drainCardQueue() {
     if (!state.dashboard) return;
-    while (state.activeCardRuns < 2 && state.pendingCardIDs.size > 0) {
-      const next = state.pendingCardIDs.entries().next().value;
-      if (!next) return;
-      const [id, force] = next;
-      state.pendingCardIDs.delete(id);
+    while (state.activeCardRuns < 1 && state.pendingCardIDs.size > 0) {
+      const ids = [];
+      let force = false;
+      for (const [id, cardForce] of state.pendingCardIDs) {
+        state.pendingCardIDs.delete(id);
+        ids.push(id);
+        force = force || cardForce;
+        if (ids.length >= maxCardsPerRun) break;
+      }
+      if (ids.length === 0) return;
       state.activeCardRuns++;
       const generation = state.runGeneration;
-      runCards([id], {force: force, generation: generation}).finally(() => {
+      runCards(ids, {force: force, generation: generation}).finally(() => {
         if (generation !== state.runGeneration) return;
         state.activeCardRuns = Math.max(0, state.activeCardRuns - 1);
         drainCardQueue();

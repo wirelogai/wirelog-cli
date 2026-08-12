@@ -3,6 +3,7 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -247,6 +248,42 @@ sections:
 	}
 }
 
+func TestRunAllUsesBoundedDefaultConcurrency(t *testing.T) {
+	cards := make([]Card, 20)
+	for i := range cards {
+		cards[i] = Card{
+			ID:    fmt.Sprintf("card-%d", i),
+			Title: fmt.Sprintf("Card %d", i),
+			Kind:  CardChart,
+			Viz:   VizLine,
+			Query: fmt.Sprintf("event-%d | count", i),
+		}
+	}
+	d := &Dashboard{Version: 1, Title: "Concurrency", Sections: []Section{{Title: "One", Cards: cards}}}
+	fake := &concurrencyQueryClient{}
+	_, err := RunAll(context.Background(), fake, d, RunOptions{})
+	if err != nil {
+		t.Fatalf("run all: %v", err)
+	}
+	if got := fake.maximum.Load(); got != defaultConcurrency {
+		t.Fatalf("maximum concurrency = %d, want %d", got, defaultConcurrency)
+	}
+}
+
+func TestDashboardAppBatchesQueuedCards(t *testing.T) {
+	source, err := assets.ReadFile("assets/app.js")
+	if err != nil {
+		t.Fatalf("read app: %v", err)
+	}
+	app := string(source)
+	if !strings.Contains(app, "const maxCardsPerRun = 8") || !strings.Contains(app, "runCards(ids,") {
+		t.Fatal("dashboard app does not submit bounded multi-card batches")
+	}
+	if strings.Contains(app, "runCards([id]") {
+		t.Fatal("dashboard app still submits one card per request")
+	}
+}
+
 func TestRenderHTMLEscapesScriptEnd(t *testing.T) {
 	d := &Dashboard{
 		Version: 1,
@@ -458,6 +495,24 @@ func newTestServer(t *testing.T) *Server {
 type fakeQueryClient struct {
 	calls    atomic.Int64
 	response *client.QueryJSONResponse
+}
+
+type concurrencyQueryClient struct {
+	current atomic.Int64
+	maximum atomic.Int64
+}
+
+func (c *concurrencyQueryClient) QueryJSON(_ context.Context, _ string, _, _ int) (*client.QueryJSONResponse, error) {
+	current := c.current.Add(1)
+	defer c.current.Add(-1)
+	for {
+		maximum := c.maximum.Load()
+		if current <= maximum || c.maximum.CompareAndSwap(maximum, current) {
+			break
+		}
+	}
+	time.Sleep(10 * time.Millisecond)
+	return &client.QueryJSONResponse{Columns: []string{"count"}, Rows: []map[string]any{{"count": 1}}}, nil
 }
 
 func (f *fakeQueryClient) QueryJSON(_ context.Context, _ string, _, _ int) (*client.QueryJSONResponse, error) {
