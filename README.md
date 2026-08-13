@@ -158,7 +158,7 @@ Agent workflow:
 - run data with `wl dashboard run --file dashboard.yaml --json`
 - sync with `wl dashboard sync --file dashboard.yaml`; the authenticated credential selects the project
 
-Add a stable root `id` such as `product-growth`. Synced dashboards render inline in the authenticated project page; sync does not create a standalone or public URL. Personal `aat_` tokens need `dashboards` scope and default new dashboards to personal visibility. `--visibility project` shares the dashboard with current project members. Later syncs preserve visibility unless the flag is explicit. Identical validated content keeps the current server version.
+Add a stable root `id` such as `product-growth`. Synced dashboards become the authenticated project's primary workspace and appear in its persistent sidebar; sync does not create a standalone or public URL. Personal `aat_` tokens need `dashboards` scope and default new dashboards to personal visibility. `--visibility project` shares the dashboard with current project members. Later syncs preserve visibility unless the flag is explicit. Identical validated content keeps the current server version.
 
 Dashboards automatically include a normalized `range` date-range control unless they define their own `variables.range`. Use `{{range.stage}}` in queries to insert a full time stage such as `| last 30d`, last month, or a custom start/end range; older `| last {{range}}` templates remain compatible. Other dashboard variables are shared anchors such as `{{platform.fragment}}`.
 When viewing a dashboard directory, add root-level `order: 10` values to control sidebar order; unordered dashboards sort by filename after ordered dashboards.
