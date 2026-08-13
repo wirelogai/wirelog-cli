@@ -32,6 +32,8 @@ type ExportOptions struct {
 	Variables    map[string]string
 	Dashboards   []DashboardRef
 	DashboardID  string
+	Raw          string
+	ETag         string
 }
 
 type htmlPayload struct {
@@ -44,6 +46,8 @@ type htmlPayload struct {
 	Variables    map[string]string `json:"variables,omitempty"`
 	Dashboards   []DashboardRef    `json:"dashboards,omitempty"`
 	DashboardID  string            `json:"dashboard_id,omitempty"`
+	Raw          string            `json:"raw,omitempty"`
+	ETag         string            `json:"etag,omitempty"`
 }
 
 type htmlTemplateData struct {
@@ -74,6 +78,8 @@ func RenderHTML(d *Dashboard, results []CardResult, opts ExportOptions) ([]byte,
 		Variables:    opts.Variables,
 		Dashboards:   opts.Dashboards,
 		DashboardID:  opts.DashboardID,
+		Raw:          opts.Raw,
+		ETag:         opts.ETag,
 	}
 	payloadJSON, err := safeJSON(payload)
 	if err != nil {

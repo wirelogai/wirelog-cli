@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -10,6 +11,39 @@ import (
 	"testing"
 	"time"
 )
+
+func TestSyncDashboardUsesCredentialScopedRoute(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			t.Errorf("expected PUT, got %s", r.Method)
+		}
+		if r.URL.Path != "/api/dashboard-sync/product-growth" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		if got := r.Header.Get("X-Api-Key"); got != "aat_test" {
+			t.Errorf("unexpected API key %q", got)
+		}
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode body: %v", err)
+		}
+		if body["visibility"] != "project" || body["source_yaml"] != "version: 1" {
+			t.Errorf("unexpected body %#v", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"dashboard":{"id":"uuid","key":"product-growth","version":2,"visibility":"project"},"changed":true}`))
+	}))
+	defer srv.Close()
+
+	client := New(srv.URL, "aat_test", "test", 5*time.Second)
+	result, err := client.SyncDashboard(context.Background(), "product-growth", "version: 1", "project")
+	if err != nil {
+		t.Fatalf("sync dashboard: %v", err)
+	}
+	if !result.Changed || result.Dashboard.Version != 2 {
+		t.Fatalf("unexpected result %#v", result)
+	}
+}
 
 func TestRetryOn5xxThenSucceed(t *testing.T) {
 	var attempts atomic.Int32

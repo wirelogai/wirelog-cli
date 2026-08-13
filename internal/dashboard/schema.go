@@ -16,6 +16,7 @@ import (
 
 // Dashboard is the root YAML dashboard document.
 type Dashboard struct {
+	ID        string              `yaml:"id,omitempty" json:"id,omitempty"`
 	Version   int                 `yaml:"version" json:"version"`
 	Title     string              `yaml:"title" json:"title"`
 	Order     int                 `yaml:"order,omitempty" json:"order,omitempty"`
@@ -172,7 +173,13 @@ var (
 	fieldNameRE       = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.]*$`)
 	optionValueRE     = regexp.MustCompile(`^[A-Za-z0-9_./:@+-]+$`)
 	cardIDRE          = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]*$`)
+	dashboardIDRE     = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 )
+
+// ValidID reports whether id is a valid stable dashboard identifier.
+func ValidID(id string) bool {
+	return dashboardIDRE.MatchString(id)
+}
 
 // Load reads dashboard YAML from r.
 func Load(r io.Reader) (*Dashboard, []byte, error) {
@@ -184,9 +191,16 @@ func Load(r io.Reader) (*Dashboard, []byte, error) {
 		return nil, nil, errEmptyDashboard
 	}
 	var d Dashboard
-	err = yaml.Unmarshal(src, &d)
+	decoder := yaml.NewDecoder(bytes.NewReader(src))
+	decoder.KnownFields(true)
+	err = decoder.Decode(&d)
 	if err != nil {
 		return nil, nil, fmt.Errorf("parse dashboard YAML: %w", err)
+	}
+	var trailing any
+	err = decoder.Decode(&trailing)
+	if !errors.Is(err, io.EOF) {
+		return nil, nil, fmt.Errorf("parse dashboard YAML: exactly one document is required")
 	}
 	normalizeDashboard(&d)
 	return &d, src, nil
@@ -222,6 +236,9 @@ func Validate(d *Dashboard) error {
 	normalizeDashboard(d)
 	if d.Version != 1 {
 		errs = append(errs, "version must be 1")
+	}
+	if d.ID != "" && !ValidID(d.ID) {
+		errs = append(errs, "id must be a lowercase kebab-case identifier up to 63 characters")
 	}
 	if strings.TrimSpace(d.Title) == "" {
 		errs = append(errs, "title is required")

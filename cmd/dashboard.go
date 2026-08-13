@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -30,6 +31,8 @@ var (
 	dashboardTokenStdin bool
 	dashboardJSON       bool
 	dashboardVars       []string
+	dashboardSyncID     string
+	dashboardVisibility string
 )
 
 var dashboardCmd = &cobra.Command{
@@ -73,6 +76,12 @@ var dashboardViewCmd = &cobra.Command{
 	RunE:  runDashboardView,
 }
 
+var dashboardSyncCmd = &cobra.Command{
+	Use:   "sync",
+	Short: "Sync dashboards into the authenticated WireLog project",
+	RunE:  runDashboardSync,
+}
+
 func init() {
 	dashboardInitCmd.Flags().StringVarP(&dashboardOutput, "output", "o", "dashboard.yaml", "Output file, or - for stdout")
 	dashboardInitCmd.Flags().BoolVar(&dashboardForce, "force", false, "Overwrite an existing file")
@@ -96,7 +105,11 @@ func init() {
 	dashboardViewCmd.Flags().IntVar(&dashboardPort, "port", 0, "Local port, or 0 for a random port")
 	dashboardViewCmd.Flags().BoolVar(&dashboardOpen, "open", true, "Open the dashboard in a browser")
 
-	dashboardCmd.AddCommand(dashboardInitCmd, dashboardSchemaCmd, dashboardValidateCmd, dashboardSaveCmd, dashboardRunCmd, dashboardViewCmd)
+	dashboardSyncCmd.Flags().StringVarP(&dashboardFile, "file", "f", "dashboard.yaml", "Dashboard YAML file or directory")
+	dashboardSyncCmd.Flags().StringVar(&dashboardSyncID, "id", "", "Stable dashboard id override for one file")
+	dashboardSyncCmd.Flags().StringVar(&dashboardVisibility, "visibility", "", "Visibility: personal or project (omitted preserves existing visibility)")
+
+	dashboardCmd.AddCommand(dashboardInitCmd, dashboardSchemaCmd, dashboardValidateCmd, dashboardSaveCmd, dashboardRunCmd, dashboardViewCmd, dashboardSyncCmd)
 	rootCmd.AddCommand(dashboardCmd)
 }
 
@@ -243,6 +256,103 @@ func runDashboardView(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	return nil
+}
+
+func runDashboardSync(_ *cobra.Command, _ []string) error {
+	if dashboardFile == "-" {
+		return fmt.Errorf("dashboard sync requires a file or directory path")
+	}
+	if dashboardVisibility != "" && dashboardVisibility != "personal" && dashboardVisibility != "project" {
+		return fmt.Errorf("invalid visibility %q; expected personal or project", dashboardVisibility)
+	}
+	refs, err := dashboard.DiscoverDashboardFiles(dashboardFile)
+	if err != nil {
+		return err
+	}
+	if dashboardSyncID != "" && len(refs) != 1 {
+		return fmt.Errorf("--id can only be used when syncing one dashboard file")
+	}
+	c, err := newClient()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cmdContext()
+	defer cancel()
+
+	results := make([]any, 0, len(refs))
+	seen := make(map[string]string, len(refs))
+	for _, ref := range refs {
+		d, source, loadErr := dashboard.LoadFile(ref.Path)
+		if loadErr != nil {
+			return loadErr
+		}
+		id, idErr := dashboardSyncIdentifier(d, ref.Path, dashboardSyncID)
+		if idErr != nil {
+			return idErr
+		}
+		if dashboardSyncID != "" && d.ID != "" && d.ID != dashboardSyncID {
+			return fmt.Errorf("--id %q does not match YAML id %q", dashboardSyncID, d.ID)
+		}
+		if prior, exists := seen[id]; exists {
+			return fmt.Errorf("dashboard id %q is used by both %s and %s", id, prior, ref.Path)
+		}
+		seen[id] = ref.Path
+		result, syncErr := c.SyncDashboard(ctx, id, string(source), dashboardVisibility)
+		if syncErr != nil {
+			handleAPIError(syncErr, "dashboard sync")
+			return syncErr
+		}
+		results = append(results, result)
+		if resolveFormat() != output.FormatJSON {
+			status := "unchanged"
+			if result.Changed {
+				status = "synced"
+			} else if result.MetadataChanged {
+				status = "visibility-updated"
+			}
+			_, writeErr := fmt.Fprintf(os.Stdout, "%s\t%s\tv%d\t%s\n", result.Dashboard.Key, status, result.Dashboard.Version, result.Dashboard.Visibility)
+			if writeErr != nil {
+				return fmt.Errorf("write dashboard sync result: %w", writeErr)
+			}
+		}
+	}
+	if resolveFormat() == output.FormatJSON {
+		return output.PrintRawJSON(os.Stdout, results)
+	}
+	return nil
+}
+
+func dashboardSyncIdentifier(d *dashboard.Dashboard, path, override string) (string, error) {
+	id := override
+	if id == "" {
+		id = d.ID
+	}
+	if id == "" {
+		id = slugDashboardFilename(filepath.Base(path))
+	}
+	if !dashboard.ValidID(id) {
+		return "", fmt.Errorf("dashboard id %q must be lowercase kebab-case and at most 63 characters", id)
+	}
+	return id, nil
+}
+
+func slugDashboardFilename(name string) string {
+	base := strings.TrimSuffix(name, filepath.Ext(name))
+	var b strings.Builder
+	lastDash := false
+	for _, r := range strings.ToLower(base) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			b.WriteRune(r)
+			lastDash = false
+		} else if !lastDash && b.Len() > 0 {
+			b.WriteByte('-')
+			lastDash = true
+		}
+		if b.Len() >= 63 {
+			break
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }
 
 func parseDashboardVars(items []string) (map[string]string, error) {

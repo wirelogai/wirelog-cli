@@ -28,6 +28,7 @@ type Server struct {
 	Token         string
 	variableMu    sync.Mutex
 	variableCache map[string]variableCacheEntry
+	queryCache    *dashboardQueryCache
 }
 
 type variableCacheEntry struct {
@@ -53,6 +54,8 @@ type runRequest struct {
 	DashboardID string            `json:"dashboard_id"`
 	Variables   map[string]string `json:"variables"`
 	CardIDs     []string          `json:"card_ids"`
+	Force       bool              `json:"force"`
+	RefreshID   string            `json:"refresh_id"`
 }
 
 // NewServer creates a dashboard server.
@@ -75,6 +78,7 @@ func NewServer(filePath, host string, qc QueryClient) (*Server, error) {
 		Client:        qc,
 		Token:         token,
 		variableCache: make(map[string]variableCacheEntry),
+		queryCache:    newDashboardQueryCache(),
 	}, nil
 }
 
@@ -129,7 +133,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	d, _, err := s.loadDashboard(ref.ID)
+	d, raw, err := s.loadDashboard(ref.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -140,6 +144,8 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		SessionToken: s.Token,
 		Dashboards:   s.Dashboards,
 		DashboardID:  ref.ID,
+		Raw:          string(raw),
+		ETag:         FileETag(raw),
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -217,6 +223,10 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	if len(req.RefreshID) > 64 {
+		http.Error(w, "refresh_id is too long", http.StatusBadRequest)
+		return
+	}
 	ref, err := s.dashboardRef(req.DashboardID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -235,7 +245,14 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 	for _, id := range req.CardIDs {
 		cardIDs[id] = struct{}{}
 	}
-	results, err := RunAll(r.Context(), s.Client, d, RunOptions{Variables: req.Variables, CardIDs: cardIDs})
+	queryClient := &cachedQueryClient{
+		base:      s.Client,
+		cache:     s.queryCache,
+		ttl:       dashboardQueryCacheTTL(d.Refresh),
+		force:     req.Force,
+		refreshID: req.RefreshID,
+	}
+	results, err := RunAll(r.Context(), queryClient, d, RunOptions{Variables: req.Variables, CardIDs: cardIDs})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -258,6 +275,7 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// Exports run once and should always reflect current data, so they intentionally bypass the local view cache.
 	results, err := RunAll(r.Context(), s.Client, d, RunOptions{})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

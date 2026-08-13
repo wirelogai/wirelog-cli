@@ -1,7 +1,8 @@
 (function () {
-  const visibleLoadDelayMS = 400;
-  const maxCardsPerRun = 8;
   const payload = JSON.parse(document.getElementById("wirelog-payload").textContent);
+  const visibleLoadDelayMS = 400;
+  const maxCardsPerRun = payload.mode === "local" ? 1 : 8;
+  const maxConcurrentCardRuns = payload.mode === "local" ? 2 : 1;
   const state = {
     dashboard: payload.dashboard,
     dashboardID: payload.dashboard_id || "",
@@ -18,8 +19,9 @@
     activeCardRuns: 0,
     runGeneration: 0,
     observer: null,
-    raw: "",
-    etag: "",
+    runController: payload.mode === "local" ? new AbortController() : null,
+    raw: payload.raw || "",
+    etag: payload.etag || "",
   };
 
   const el = {
@@ -38,6 +40,15 @@
     timezone: document.getElementById("timezone"),
   };
 
+  const chartResizeObserver = "ResizeObserver" in window
+    ? new ResizeObserver(entries => {
+      for (const entry of entries) {
+        const chart = window.echarts && window.echarts.getInstanceByDom(entry.target);
+        if (chart) chart.resize();
+      }
+    })
+    : null;
+
   boot();
 
   function boot() {
@@ -55,7 +66,8 @@
       window.addEventListener("popstate", () => {
         loadLocal(dashboardIDFromLocation() || "").catch(err => setStatus(err.message || String(err)));
       });
-      loadLocal(dashboardIDFromLocation() || state.dashboardID);
+      render();
+      refreshLocalState(dashboardIDFromLocation() || state.dashboardID).catch(err => setStatus(err.message || String(err)));
     } else {
       render();
       if (payload.mode === "interactive") {
@@ -93,6 +105,28 @@
     resetResults();
     render();
     setStatus("dashboard loaded");
+  }
+
+  async function refreshLocalState(id) {
+    const url = id ? "/api/dashboard?id=" + encodeURIComponent(id) : "/api/dashboard";
+    const res = await fetch(url, {
+      headers: {"X-WireLog-Dashboard-Token": payload.session_token},
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    if (data.dashboard_id !== state.dashboardID) return;
+    if (state.etag && data.etag !== state.etag) {
+      await loadLocal(id);
+      return;
+    }
+    const selected = state.variables;
+    state.dashboard = data.dashboard;
+    state.dashboards = data.dashboards || [];
+    state.raw = data.raw;
+    state.etag = data.etag;
+    state.variables = Object.assign({}, defaults(state.dashboard), selected);
+    renderSidebar();
+    renderVariables();
   }
 
   function render() {
@@ -286,6 +320,7 @@
   }
 
   function renderSections() {
+    disposeCharts(el.sections);
     el.sections.innerHTML = "";
     for (const section of state.dashboard.sections || []) {
       const h = document.createElement("h2");
@@ -318,6 +353,7 @@
   }
 
   function renderCardBody(card, body) {
+    disposeCharts(body);
     body.innerHTML = "";
     if (card.kind === "markdown") {
       const note = document.createElement("div");
@@ -365,6 +401,8 @@
 
   function resetResults() {
     state.runGeneration++;
+    if (state.runController) state.runController.abort();
+    state.runController = payload.mode === "local" ? new AbortController() : null;
     state.results = [];
     state.loadingCardIDs.clear();
     state.activeCardRuns = 0;
@@ -482,13 +520,26 @@
       setStatus("scroll to load charts");
       return;
     }
-    queueCards(ids, options || {});
+    const runOptions = Object.assign({}, options || {});
+    if (runOptions.force && !runOptions.refreshID) {
+      runOptions.refreshID = String(Date.now()) + "-" + String(state.runGeneration);
+    }
+    queueCards(ids, runOptions);
   }
 
   function queueCards(cardIDs, options) {
     const force = !!(options && options.force);
-    for (const id of orderedCardIDs(cardIDs || [])) {
-      state.pendingCardIDs.set(id, force || state.pendingCardIDs.get(id) || false);
+    const refreshID = force && options ? String(options.refreshID || "") : "";
+    for (const id of new Set(cardIDs || [])) {
+      const current = state.pendingCardIDs.get(id) || {};
+      state.pendingCardIDs.set(id, {
+        force: force || !!current.force,
+        refreshID: refreshID || current.refreshID || "",
+      });
+    }
+    if (payload.mode === "local") {
+      drainCardQueue();
+      return;
     }
     if (state.batchTimer) return;
     state.batchTimer = setTimeout(() => {
@@ -516,19 +567,22 @@
 
   function drainCardQueue() {
     if (!state.dashboard) return;
-    while (state.activeCardRuns < 1 && state.pendingCardIDs.size > 0) {
+    while (state.activeCardRuns < maxConcurrentCardRuns && state.pendingCardIDs.size > 0) {
       const ids = [];
       let force = false;
-      for (const [id, cardForce] of state.pendingCardIDs) {
+      let refreshID = "";
+      const nextIDs = orderedCardIDs([...state.pendingCardIDs.keys()]).slice(0, maxCardsPerRun);
+      for (const id of nextIDs) {
+        const pending = state.pendingCardIDs.get(id) || {};
         state.pendingCardIDs.delete(id);
         ids.push(id);
-        force = force || cardForce;
-        if (ids.length >= maxCardsPerRun) break;
+        force = force || pending.force;
+        refreshID = refreshID || pending.refreshID;
       }
       if (ids.length === 0) return;
       state.activeCardRuns++;
       const generation = state.runGeneration;
-      runCards(ids, {force: force, generation: generation}).finally(() => {
+      runCards(ids, {force: force, refreshID: refreshID, generation: generation}).finally(() => {
         if (generation !== state.runGeneration) return;
         state.activeCardRuns = Math.max(0, state.activeCardRuns - 1);
         drainCardQueue();
@@ -555,6 +609,7 @@
     });
     if (ids.length === 0) return;
     for (const id of ids) state.loadingCardIDs.add(id);
+    const controller = state.runController;
     refreshCards(ids);
     setStatus("querying " + ids.length + " card" + (ids.length === 1 ? "" : "s"));
     try {
@@ -566,7 +621,14 @@
             "Content-Type": "application/json",
             "X-WireLog-Dashboard-Token": payload.session_token,
           },
-          body: JSON.stringify({dashboard_id: state.dashboardID, variables: state.variables, card_ids: ids}),
+          body: JSON.stringify({
+            dashboard_id: state.dashboardID,
+            variables: state.variables,
+            card_ids: ids,
+            force: force,
+            refresh_id: options.refreshID || "",
+          }),
+          signal: controller ? controller.signal : undefined,
         });
         if (!res.ok) throw new Error(await res.text());
         results = (await res.json()).results || [];
@@ -577,7 +639,7 @@
       mergeResults(ids, results);
       setStatus("updated " + new Date().toLocaleTimeString());
     } catch (err) {
-      if (generation === state.runGeneration) setStatus(err.message || String(err));
+      if (generation === state.runGeneration && err.name !== "AbortError") setStatus(err.message || String(err));
     } finally {
       if (generation !== state.runGeneration) return;
       for (const id of ids) state.loadingCardIDs.delete(id);
@@ -1018,8 +1080,27 @@
       const chart = window.echarts.init(node, null, {renderer: "svg"});
       chart.setOption(chartOption(card, series), true);
       requestAnimationFrame(() => chart.resize());
-      window.addEventListener("resize", () => chart.resize(), {passive: true});
+      if (chartResizeObserver) chartResizeObserver.observe(node);
     });
+  }
+
+  if (!chartResizeObserver) {
+    window.addEventListener("resize", () => {
+      if (!window.echarts) return;
+      for (const node of document.querySelectorAll(".chart")) {
+        const chart = window.echarts.getInstanceByDom(node);
+        if (chart) chart.resize();
+      }
+    }, {passive: true});
+  }
+
+  function disposeCharts(root) {
+    if (!root || !window.echarts) return;
+    for (const node of root.querySelectorAll(".chart")) {
+      if (chartResizeObserver) chartResizeObserver.unobserve(node);
+      const chart = window.echarts.getInstanceByDom(node);
+      if (chart) chart.dispose();
+    }
   }
 
   function chartOption(card, series) {

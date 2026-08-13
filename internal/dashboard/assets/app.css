@@ -144,6 +144,14 @@ h2 {
   justify-content: flex-end;
 }
 
+.actions > button,
+.actions > .settings > summary {
+  display: inline-flex;
+  align-items: center;
+  height: 36px;
+  padding: 0 10px;
+}
+
 .settings {
   position: relative;
 }

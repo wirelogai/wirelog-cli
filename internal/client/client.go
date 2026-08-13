@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -133,7 +134,38 @@ type QueryJSONResponse struct {
 	Metadata    map[string]any   `json:"metadata,omitempty"`
 }
 
+// DashboardSummary is the current server version of a synced dashboard.
+type DashboardSummary struct {
+	ID         string `json:"id"`
+	Key        string `json:"key"`
+	Title      string `json:"title"`
+	Visibility string `json:"visibility"`
+	Checksum   string `json:"checksum"`
+	Version    int    `json:"version"`
+}
+
+// DashboardSyncResponse reports the current dashboard and whether a new version was created.
+type DashboardSyncResponse struct {
+	Dashboard       DashboardSummary `json:"dashboard"`
+	Changed         bool             `json:"changed"`
+	MetadataChanged bool             `json:"metadata_changed"`
+}
+
 // --- API methods ---
+
+// SyncDashboard validates and syncs dashboard YAML into the API key's project.
+func (c *Client) SyncDashboard(ctx context.Context, dashboardID, sourceYAML, visibility string) (*DashboardSyncResponse, error) {
+	body := map[string]string{"source_yaml": sourceYAML}
+	if visibility != "" {
+		body["visibility"] = visibility
+	}
+	var result DashboardSyncResponse
+	err := c.DoJSON(ctx, http.MethodPut, "/api/dashboard-sync/"+url.PathEscape(dashboardID), body, &result)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
 
 // Query sends a DSL query and returns the raw response body.
 func (c *Client) Query(ctx context.Context, q, format string, limit, offset int) ([]byte, string, error) {

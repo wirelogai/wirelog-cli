@@ -2,7 +2,7 @@
 
 Headless analytics from your terminal. Events in, insights out.
 
-Alternative to PostHog, Amplitude, and Mixpanel — designed for agents instead of dashboards.
+Alternative to PostHog, Amplitude, and Mixpanel — designed for agents first, with dashboards defined as code.
 
 ## Install
 
@@ -40,6 +40,7 @@ wl inspect signup
 # Build an agent-authored dashboard
 wl dashboard init --output dashboard.yaml
 wl dashboard validate --file dashboard.yaml
+wl dashboard sync --file dashboard.yaml
 wl dashboard save --file dashboard.yaml --output index.html --mode report
 ```
 
@@ -51,7 +52,7 @@ wl dashboard save --file dashboard.yaml --output index.html --mode report
 | `wl track <event>` | Send tracking events | `pk_` / `sk_` / `aat_` (track) |
 | `wl identify` | Set user profile properties | `pk_` / `sk_` / `aat_` (track) |
 | `wl inspect [event]` | Discover events and properties | `aat_` personal token or `sk_` |
-| `wl dashboard init\|schema\|validate\|run\|view\|save` | Create, validate, run, view, and export YAML dashboards | varies |
+| `wl dashboard init\|schema\|validate\|run\|view\|save\|sync` | Create, validate, run, view, export, and sync YAML dashboards | varies |
 | `wl project list\|create\|get\|delete\|usage` | Manage projects | `ak_` (admin) |
 | `wl gdpr export\|delete` | GDPR data export/deletion | `sk_` / `aat_` (admin) |
 | `wl health` | Check API health | none |
@@ -130,6 +131,9 @@ wl dashboard run --file dashboard.yaml --json      # run every query and print d
 wl dashboard run --file dashboard.yaml --var range=7d --format markdown
 wl dashboard view --file dashboard.yaml --open
 wl dashboard view --file ./dashboards              # sidebar for every .yaml/.yml file
+wl dashboard sync --file dashboard.yaml            # private dashboard with a personal token
+wl dashboard sync --file ./dashboards --visibility project
+wl dashboard sync --file dashboard.yaml --host https://wirelog.example.com
 wl dashboard save --file dashboard.yaml --output index.html --mode report
 wl dashboard save --file dashboard.yaml --output - --mode report
 ```
@@ -152,13 +156,16 @@ Agent workflow:
 - generate YAML from `wl dashboard schema --output -`
 - validate with `wl dashboard validate --file dashboard.yaml`
 - run data with `wl dashboard run --file dashboard.yaml --json`
+- sync with `wl dashboard sync --file dashboard.yaml`; the authenticated credential selects the project
+
+Add a stable root `id` such as `product-growth`. Synced dashboards render inline in the authenticated project page; sync does not create a standalone or public URL. Personal `aat_` tokens need `dashboards` scope and default new dashboards to personal visibility. `--visibility project` shares the dashboard with current project members. Later syncs preserve visibility unless the flag is explicit. Identical validated content keeps the current server version.
 
 Dashboards automatically include a normalized `range` date-range control unless they define their own `variables.range`. Use `{{range.stage}}` in queries to insert a full time stage such as `| last 30d`, last month, or a custom start/end range; older `| last {{range}}` templates remain compatible. Other dashboard variables are shared anchors such as `{{platform.fragment}}`.
 When viewing a dashboard directory, add root-level `order: 10` values to control sidebar order; unordered dashboards sort by filename after ordered dashboards.
 Directory dashboards also get stable local routes like `/dashboard/usage.yaml`; extensionless routes like `/dashboard/usage` resolve when unambiguous.
 User lookup dashboards can use submitted `type: input` email variables with named fragments like `{{subject.events_fragment}}` and `{{subject.users_fragment}}`; `*@domain.com` becomes a safe domain equality filter.
 Chart cards can set `options.x`, `options.y`, and `options.series` when a result has multiple plausible columns. Time bucket charts use chronological axes and align multi-series buckets so missing values render as gaps; line and area charts keep the active bucket live and draw its final segment as dashed, with the tooltip marked `partial`. Cards can also set `options.calculate: ratio` to divide the first query by the second query for filtered unit-economics metrics without relying on backend formula support.
-Local and interactive dashboards progressively load visible cards in layout order. Up to eight cards share one request so identical rendered queries are deduplicated, with at most eight query jobs running concurrently. Cards entering the viewport settle for 400 ms, and query rate limits are displayed immediately rather than retried invisibly.
+Local dashboards start the first two visible cards immediately, then start the next card in layout order whenever one finishes. One card is returned per request so it paints without waiting for slower neighbors; the local server caps the whole dashboard at four active ClickHouse queries, coalesces identical in-flight queries, and keeps a short, refresh-aware result cache. The refresh button bypasses older cached results while still deduplicating work within that refresh. Interactive exports retain bounded multi-card requests. Cards entering the viewport settle for 400 ms, and query rate limits are displayed immediately rather than retried invisibly.
 
 ## Choices
 

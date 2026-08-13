@@ -25,6 +25,19 @@ func TestLoadValidateStarter(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsUnknownFieldsAndMultipleDocuments(t *testing.T) {
+	unknown := strings.Replace(StarterYAML, "title: Product Growth", "project_id: forbidden\ntitle: Product Growth", 1)
+	_, _, err := Load(strings.NewReader(unknown))
+	if err == nil || !strings.Contains(err.Error(), "field project_id not found") {
+		t.Fatalf("expected unknown field error, got %v", err)
+	}
+
+	_, _, err = Load(strings.NewReader(StarterYAML + "\n---\n" + StarterYAML))
+	if err == nil || !strings.Contains(err.Error(), "exactly one document") {
+		t.Fatalf("expected multiple document error, got %v", err)
+	}
+}
+
 func TestRenderQueryTemplate(t *testing.T) {
 	d, _, err := Load(strings.NewReader(StarterYAML))
 	if err != nil {
@@ -270,17 +283,27 @@ func TestRunAllUsesBoundedDefaultConcurrency(t *testing.T) {
 	}
 }
 
-func TestDashboardAppBatchesQueuedCards(t *testing.T) {
+func TestDashboardAppWaterfallsLocalCards(t *testing.T) {
 	source, err := assets.ReadFile("assets/app.js")
 	if err != nil {
 		t.Fatalf("read app: %v", err)
 	}
 	app := string(source)
-	if !strings.Contains(app, "const maxCardsPerRun = 8") || !strings.Contains(app, "runCards(ids,") {
-		t.Fatal("dashboard app does not submit bounded multi-card batches")
+	if !strings.Contains(app, `const maxCardsPerRun = payload.mode === "local" ? 1 : 8`) {
+		t.Fatal("dashboard app does not submit one local card per request")
 	}
-	if strings.Contains(app, "runCards([id]") {
-		t.Fatal("dashboard app still submits one card per request")
+	if !strings.Contains(app, `const maxConcurrentCardRuns = payload.mode === "local" ? 2 : 1`) {
+		t.Fatal("dashboard app does not use two local waterfall lanes")
+	}
+	if !strings.Contains(app, `if (payload.mode === "local") {
+      drainCardQueue();`) {
+		t.Fatal("dashboard app does not start local cards immediately")
+	}
+	if !strings.Contains(app, `orderedCardIDs([...state.pendingCardIDs.keys()])`) {
+		t.Fatal("dashboard app does not drain newly visible cards in layout order")
+	}
+	if !strings.Contains(app, "disposeCharts(body)") || !strings.Contains(app, "chartResizeObserver.unobserve(node)") {
+		t.Fatal("dashboard app does not dispose replaced charts")
 	}
 }
 

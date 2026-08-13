@@ -2,6 +2,7 @@ package dashboard
 
 // StarterYAML is the default agent-friendly dashboard template.
 const StarterYAML = `version: 1
+id: product-growth
 title: Product Growth
 order: 10
 refresh: 60s
@@ -117,6 +118,7 @@ const SchemaJSON = `{
   "type": "object",
   "required": ["version", "title", "sections"],
   "properties": {
+	"id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"},
     "version": {"const": 1},
     "title": {"type": "string", "minLength": 1},
     "order": {"type": "integer", "minimum": 0},
