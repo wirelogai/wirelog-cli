@@ -307,6 +307,23 @@ func TestDashboardAppWaterfallsLocalCards(t *testing.T) {
 	}
 }
 
+func TestDashboardAppPrioritizesRequiredInputStatus(t *testing.T) {
+	source, err := assets.ReadFile("assets/app.js")
+	if err != nil {
+		t.Fatalf("read app: %v", err)
+	}
+	app := string(source)
+	if !strings.Contains(app, `if (missing) return "enter " + missing + " to load"`) {
+		t.Fatal("dashboard cards do not prompt for the missing required input")
+	}
+	if !strings.Contains(app, `return missing ? "enter " + missing + " to load dashboard" : "scroll to load charts"`) {
+		t.Fatal("dashboard status does not prioritize the missing required input")
+	}
+	if strings.Contains(app, `state.visibleCardIDs.has(card.id) ? "loading" : "scroll to load"`) {
+		t.Fatal("dashboard cards still choose viewport copy before required-input copy")
+	}
+}
+
 func TestRenderHTMLEscapesScriptEnd(t *testing.T) {
 	d := &Dashboard{
 		Version: 1,

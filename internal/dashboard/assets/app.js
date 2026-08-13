@@ -71,7 +71,7 @@
     } else {
       render();
       if (payload.mode === "interactive") {
-        setStatus("scroll to load charts");
+        setStatus(dashboardLoadStatus());
       } else {
         setStatus("report loaded");
       }
@@ -104,7 +104,7 @@
     state.tableSorts.clear();
     resetResults();
     render();
-    setStatus("dashboard loaded");
+    setStatus(dashboardLoadStatus());
   }
 
   async function refreshLocalState(id) {
@@ -204,9 +204,7 @@
         form.addEventListener("submit", event => {
           event.preventDefault();
           state.variables[name] = input.value.trim();
-          state.visibleCardIDs.clear();
-          resetResults();
-          renderSections();
+          rerunForVariableChange();
         });
         form.append(input, submit);
         wrap.append(label, form);
@@ -228,9 +226,7 @@
       select.value = state.variables[name] || variable.default;
       select.addEventListener("change", () => {
         state.variables[name] = select.value;
-        state.visibleCardIDs.clear();
-        resetResults();
-        renderSections();
+        rerunForVariableChange();
       });
       if (payload.mode === "report") select.disabled = true;
       wrap.append(label, select);
@@ -304,6 +300,7 @@
     state.visibleCardIDs.clear();
     resetResults();
     renderSections();
+    setStatus(dashboardLoadStatus());
   }
 
   function renderTimezone() {
@@ -364,7 +361,7 @@
     }
     const result = resultByID(card.id);
     if (!result) {
-      body.appendChild(meta(dynamicMode() ? (state.visibleCardIDs.has(card.id) ? "loading" : "scroll to load") : "waiting"));
+      body.appendChild(meta(dynamicMode() ? cardPendingStatus(card.id) : "waiting"));
       return;
     }
     if (result.error) {
@@ -397,6 +394,17 @@
 
   function dynamicMode() {
     return payload.mode === "local" || payload.mode === "interactive";
+  }
+
+  function cardPendingStatus(cardID) {
+    const missing = missingRequiredInput();
+    if (missing) return "enter " + missing + " to load";
+    return state.visibleCardIDs.has(cardID) ? "loading" : "scroll to load";
+  }
+
+  function dashboardLoadStatus() {
+    const missing = missingRequiredInput();
+    return missing ? "enter " + missing + " to load dashboard" : "scroll to load charts";
   }
 
   function resetResults() {
@@ -517,7 +525,7 @@
   async function runVisible(options) {
     const ids = visibleRunnableCardIDs();
     if (ids.length === 0) {
-      setStatus("scroll to load charts");
+      setStatus(dashboardLoadStatus());
       return;
     }
     const runOptions = Object.assign({}, options || {});
@@ -595,7 +603,7 @@
     const generation = options && Number.isFinite(options.generation) ? options.generation : state.runGeneration;
     const missing = missingRequiredInput();
     if (missing) {
-      setStatus(missing + " is required");
+      setStatus(dashboardLoadStatus());
       clearPendingBatch();
       return;
     }
